@@ -101,6 +101,13 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertIn("删除当前对话", labels)
         self.assertIn("下载 ATS PDF", labels)
 
+    def test_build_tool_actions_include_doda_search(self):
+        frontend_app = load_frontend_app_module()
+
+        labels = [action.label for action in frontend_app.build_tool_actions()]
+
+        self.assertIn("doda 搜索岗位", labels)
+
     def test_render_portals_config_outputs_yaml(self):
         frontend_app = load_frontend_app_module()
 
@@ -289,6 +296,53 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertIn("SEEK", message)
         self.assertIn("python backend engineer", message)
         self.assertIn("Example Co", message)
+
+    def test_format_seek_search_result_preserves_doda_source_label(self):
+        frontend_app = load_frontend_app_module()
+
+        message = frontend_app.format_seek_search_result(
+            frontend_app.SeekSearchResponse.model_validate(
+                {
+                    "plan": {
+                        "resume_id": "resume-ja-1",
+                        "source": "doda",
+                        "candidate_profile_summary": "Python と FastAPI を使ったバックエンド経験。",
+                        "keywords": ["バックエンドエンジニア"],
+                        "location": "東京",
+                    },
+                    "jobs": [
+                        {
+                            "job_id": "doda:https://doda.jp/job/123",
+                            "source": "doda",
+                            "language": "ja",
+                            "search_keyword": "バックエンドエンジニア",
+                            "title": "バックエンドエンジニア",
+                            "company": "OpenAI Japan",
+                            "location": "東京",
+                            "salary": "年収700万円",
+                            "work_type": None,
+                            "listed_at": None,
+                            "job_url": "https://doda.jp/job/123",
+                            "summary": "Python / FastAPI",
+                            "match_score": 0.91,
+                            "raw_location_text": "東京",
+                            "raw_salary_text": "年収700万円",
+                        }
+                    ],
+                    "stats": {
+                        "keywords_generated": 1,
+                        "queries_attempted": 1,
+                        "queries_succeeded": 1,
+                        "raw_jobs_found": 2,
+                        "jobs_after_dedupe": 1,
+                    },
+                    "errors": [],
+                }
+            )
+        )
+
+        self.assertIn("doda", message)
+        self.assertIn("OpenAI Japan", message)
 
     def test_format_scheduled_scan_settings_includes_assets_and_recent_jobs(self):
         frontend_app = load_frontend_app_module()
@@ -675,6 +729,41 @@ class CareerOpsFrontendBackendClientTests(unittest.IsolatedAsyncioTestCase):
         method, url, kwargs = RecordingAsyncClient.requests[0]
         self.assertEqual((method, url), ("POST", "http://backend/api/v1/jobs/search/seek"))
         self.assertEqual(kwargs["json"]["resume_id"], "resume-1")
+
+    async def test_search_doda_jobs_posts_resume_id(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/v1/jobs/search/doda",
+            ): MockHTTPResponse(
+                {
+                    "plan": {
+                        "resume_id": "resume-ja-1",
+                        "source": "doda",
+                        "candidate_profile_summary": "Python と FastAPI を使ったバックエンド経験。",
+                        "keywords": ["バックエンドエンジニア"],
+                        "location": "東京",
+                    },
+                    "jobs": [],
+                    "stats": {
+                        "keywords_generated": 1,
+                        "queries_attempted": 1,
+                        "queries_succeeded": 1,
+                        "raw_jobs_found": 0,
+                        "jobs_after_dedupe": 0,
+                    },
+                    "errors": [],
+                }
+            )
+        }
+
+        backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            await backend.search_doda_jobs("resume-ja-1")
+
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("POST", "http://backend/api/v1/jobs/search/doda"))
+        self.assertEqual(kwargs["json"]["resume_id"], "resume-ja-1")
 
     async def test_upload_resume_posts_language_form_field(self):
         RecordingAsyncClient.responses = {

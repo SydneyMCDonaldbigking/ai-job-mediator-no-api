@@ -149,6 +149,7 @@ ACTION_REUPLOAD_MASTER_RESUME = "career_ops_reupload_master_resume"
 ACTION_DOWNLOAD_TAILORED_PDF = "career_ops_download_tailored_pdf"
 ACTION_SCAN_JOBS = "career_ops_scan_jobs"
 ACTION_SEARCH_SEEK = "career_ops_search_seek"
+ACTION_SEARCH_DODA = "career_ops_search_doda"
 ACTION_VIEW_PORTALS = "career_ops_view_portals"
 ACTION_EDIT_PORTALS = "career_ops_edit_portals"
 ACTION_UPLOAD_EN_RESUME = "career_ops_upload_en_resume"
@@ -609,6 +610,14 @@ class ResumeMatcherBackend:
             )
         response.raise_for_status()
         return SeekSearchResponse.model_validate(response.json())
+    async def search_doda_jobs(self, resume_id: str) -> SeekSearchResponse:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/jobs/search/doda",
+                json={"resume_id": resume_id},
+            )
+        response.raise_for_status()
+        return SeekSearchResponse.model_validate(response.json())
     async def get_portals_config(self) -> PortalsConfig:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -665,6 +674,7 @@ class InMemoryTestBackend:
         self.job_descriptions: dict[str, str] = {}
         self.multilingual_assets = MultilingualResumeAssets(
             resume_en_id=self.resume_id,
+            resume_ja_id="test-ja-resume",
             updated_at="2026-04-17T00:00:00+00:00",
         )
         self.scheduled_scan_settings = ScheduledScanSettingsResponse.model_validate(
@@ -980,6 +990,46 @@ class InMemoryTestBackend:
                     "queries_attempted": 2,
                     "queries_succeeded": 2,
                     "raw_jobs_found": 3,
+                    "jobs_after_dedupe": 1,
+                },
+                "errors": [],
+            }
+        )
+    async def search_doda_jobs(self, resume_id: str) -> SeekSearchResponse:
+        del resume_id
+        return SeekSearchResponse.model_validate(
+            {
+                "plan": {
+                    "resume_id": self.multilingual_assets.resume_ja_id or "test-ja-resume",
+                    "source": "doda",
+                    "candidate_profile_summary": "Python と FastAPI を使ったバックエンド開発経験。",
+                    "keywords": ["バックエンドエンジニア", "Python エンジニア"],
+                    "location": "東京",
+                },
+                "jobs": [
+                    {
+                        "job_id": "doda:https://doda.jp/job/123",
+                        "source": "doda",
+                        "language": "ja",
+                        "search_keyword": "バックエンドエンジニア",
+                        "title": "バックエンドエンジニア",
+                        "company": "OpenAI Japan",
+                        "location": "東京",
+                        "salary": "年収700万円-1000万円",
+                        "work_type": None,
+                        "listed_at": None,
+                        "job_url": "https://doda.jp/job/123",
+                        "summary": "Python / FastAPI / API 開発",
+                        "match_score": 0.89,
+                        "raw_location_text": "東京",
+                        "raw_salary_text": "年収700万円-1000万円",
+                    }
+                ],
+                "stats": {
+                    "keywords_generated": 2,
+                    "queries_attempted": 2,
+                    "queries_succeeded": 2,
+                    "raw_jobs_found": 2,
                     "jobs_after_dedupe": 1,
                 },
                 "errors": [],
@@ -1490,8 +1540,9 @@ def format_scan_result(result: CareerOpsScanResponse) -> str:
 def format_seek_search_result(result: SeekSearchResponse) -> str:
     plan = result.plan
     stats = result.stats
+    source_label = "SEEK" if plan.source == "seek" else plan.source
     lines = [
-        "### SEEK 搜索结果",
+        f"### {source_label} 搜索结果",
         "",
         f"- 地点：`{plan.location}`",
         f"- 关键词：{', '.join(plan.keywords)}",
@@ -1559,6 +1610,12 @@ def build_tool_actions() -> list[cl.Action]:
             tooltip="根据当前简历生成关键词并搜索 SEEK 列表页",
         ),
         cl.Action(
+            name=ACTION_SEARCH_DODA,
+            payload={"feature": ACTION_SEARCH_DODA},
+            label="doda 搜索岗位",
+            tooltip="根据当前日文简历生成关键词并搜索 doda 列表页",
+        ),
+        cl.Action(
             name=ACTION_VIEW_PORTALS,
             payload={"feature": ACTION_VIEW_PORTALS},
             label="查看 Portals",
@@ -1613,6 +1670,12 @@ def build_tool_actions() -> list[cl.Action]:
             payload={"feature": ACTION_SEARCH_SEEK},
             label="SEEK 搜索岗位",
             tooltip="根据当前英文简历生成关键词并搜索 SEEK 列表页",
+        ),
+        cl.Action(
+            name=ACTION_SEARCH_DODA,
+            payload={"feature": ACTION_SEARCH_DODA},
+            label="doda 搜索岗位",
+            tooltip="根据当前日文简历生成关键词并搜索 doda 列表页",
         ),
         cl.Action(
             name=ACTION_UPLOAD_EN_RESUME,
@@ -1826,6 +1889,19 @@ async def ensure_resume_available() -> str | None:
         content="先把主简历上传给我吧。上传后我就能继续帮你做评估或优化。",
     ).send()
     return None
+async def ensure_resume_available_for_language(resume_language: str) -> str | None:
+    if resume_language == "en":
+        return await ensure_resume_available()
+    settings = await backend.get_scheduled_scan_settings()
+    resume_id = getattr(settings.assets, f"resume_{resume_language}_id", None)
+    if resume_id:
+        return resume_id
+    language_label = get_resume_language_label(resume_language)
+    await cl.Message(
+        content=f"请先上传{language_label}简历。上传后我就能继续帮你搜索对应站点的岗位。",
+        actions=build_tool_actions(),
+    ).send()
+    return None
 async def ask_for_resume_upload(
     prompt: str | None = None,
     resume_language: str = "en",
@@ -1882,6 +1958,16 @@ async def handle_seek_search_request() -> None:
     progress = cl.Message(content="正在搜索 SEEK 岗位，请稍等...")
     await progress.send()
     result = await backend.search_seek_jobs(resume_id)
+    progress.content = format_seek_search_result(result)
+    progress.actions = build_tool_actions()
+    await progress.update()
+async def handle_doda_search_request() -> None:
+    resume_id = await ensure_resume_available_for_language("ja")
+    if not resume_id:
+        return
+    progress = cl.Message(content="正在搜索 doda 岗位，请稍等...")
+    await progress.send()
+    result = await backend.search_doda_jobs(resume_id)
     progress.content = format_seek_search_result(result)
     progress.actions = build_tool_actions()
     await progress.update()
@@ -2196,6 +2282,9 @@ async def on_scan_jobs_action(_: Any) -> None:
 @cl.action_callback(ACTION_SEARCH_SEEK)
 async def on_search_seek_action(_: Any) -> None:
     await handle_seek_search_request()
+@cl.action_callback(ACTION_SEARCH_DODA)
+async def on_search_doda_action(_: Any) -> None:
+    await handle_doda_search_request()
 @cl.action_callback(ACTION_VIEW_PORTALS)
 async def on_view_portals_action(_: Any) -> None:
     await handle_view_portals_request()

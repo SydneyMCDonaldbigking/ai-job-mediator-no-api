@@ -9,9 +9,11 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 
 BACKEND_TESTS = [
     "backend/tests/integration/test_chat_history_api.py",
+    "backend/tests/integration/test_doda_search_api.py",
     "backend/tests/integration/test_portals_config_api.py",
     "backend/tests/integration/test_seek_search_api.py",
     "backend/tests/integration/test_scheduled_scan_api.py",
+    "backend/tests/unit/test_doda_search_service.py",
     "backend/tests/unit/test_seek_search_service.py",
     "backend/tests/unit/test_scheduled_scan_service.py",
 ]

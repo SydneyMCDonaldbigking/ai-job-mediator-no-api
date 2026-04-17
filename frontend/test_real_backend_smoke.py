@@ -64,7 +64,14 @@ def send_chat_message(page, text: str) -> None:
         for index in range(buttons.count()):
             button = buttons.nth(index)
             try:
-                if button.is_visible() and button.is_enabled():
+                disabled_attr = button.get_attribute("disabled")
+                aria_disabled = button.get_attribute("aria-disabled")
+                if (
+                    button.is_visible()
+                    and button.is_enabled()
+                    and disabled_attr is None
+                    and aria_disabled != "true"
+                ):
                     box = button.bounding_box()
                     candidates.append((box["y"] if box else float("-inf"), button))
             except Exception:
