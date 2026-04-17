@@ -1554,30 +1554,36 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
     ]
     if result.jobs:
         lines.extend(["", "### 职位卡片"])
-        for index, job in enumerate(result.jobs[:10], start=1):
-            extras = []
-            if job.salary:
-                extras.append(job.salary)
-            if job.work_type:
-                extras.append(job.work_type)
-            if job.listed_at:
-                extras.append(job.listed_at)
-            lines.extend(
-                [
-                    f"#### {index}. {job.title}",
-                    f"- 公司：`{job.company}`",
-                    f"- 来源：`{job.source}`",
-                    f"- 地点：`{job.location}`",
-                    f"- 匹配分：`{job.match_score:.2f}`",
-                    f"- 搜索词：`{job.search_keyword}`",
-                ]
-            )
-            if extras:
-                lines.append(f"- 标签：`{' | '.join(extras)}`")
-            if job.summary:
-                lines.append(f"- 摘要：{job.summary}")
-            lines.append(f"- [打开岗位]({job.job_url})")
-            lines.append("")
+        grouped_jobs: dict[str, list[SeekSearchJob]] = {}
+        for job in result.jobs[:10]:
+            grouped_jobs.setdefault(job.source, []).append(job)
+        for group_source, jobs in grouped_jobs.items():
+            group_label = "SEEK" if group_source == "seek" else group_source
+            lines.extend(["", f"### {group_label} 岗位"])
+            for index, job in enumerate(jobs, start=1):
+                extras = []
+                if job.salary:
+                    extras.append(job.salary)
+                if job.work_type:
+                    extras.append(job.work_type)
+                if job.listed_at:
+                    extras.append(job.listed_at)
+                lines.extend(
+                    [
+                        f"#### {index}. {job.title}",
+                        f"- 公司：`{job.company}`",
+                        f"- 来源：`{group_label}`",
+                        f"- 地点：`{job.location}`",
+                        f"- 匹配分：`{job.match_score:.2f}`",
+                        f"- 搜索词：`{job.search_keyword}`",
+                    ]
+                )
+                if extras:
+                    lines.append(f"- 标签：`{' | '.join(extras)}`")
+                if job.summary:
+                    lines.append(f"- 摘要：{job.summary}")
+                lines.append(f"- [打开岗位]({job.job_url})")
+                lines.append("")
     else:
         lines.extend(["", f"这次没有抓到符合条件的 {source_label} 岗位。"])
     if result.errors:
