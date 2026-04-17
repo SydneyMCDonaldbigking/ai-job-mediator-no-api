@@ -122,3 +122,14 @@ next-env.d.ts
 # Config file with API keys - NEVER COMMIT
 config.json
 **/config.json
+
+# Local runtime and recovery artifacts
+.files/
+.tmp_recover/
+*.log
+frontend/.files/
+frontend/.logs/
+frontend/.tmp-tests/
+frontend/app_old.txt
+frontend/app_broken_recovery.py
+frontend/_tmp_check_app.py

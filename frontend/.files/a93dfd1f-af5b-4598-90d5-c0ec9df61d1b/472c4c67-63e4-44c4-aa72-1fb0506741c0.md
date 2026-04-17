@@ -1,1 +1,0 @@
-Short targeted cover letter.
