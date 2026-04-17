@@ -2,7 +2,6 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
-import marshal
 import sys
 from pathlib import Path
 from typing import Any
@@ -176,16 +175,9 @@ class ResumeUploadResponse(BaseModel):
     resume_id: str
     processing_status: str = "pending"
     is_master: bool = False
-_PYC_PATH = FRONTEND_DIR / "__pycache__" / "app.cpython-312.pyc"
-if not _PYC_PATH.exists():
-    raise RuntimeError(f"Missing bootstrap bytecode: {_PYC_PATH}")
-with _PYC_PATH.open("rb") as _pyc_file:
-    _pyc_file.read(16)
-    _bootstrap_code = marshal.load(_pyc_file)
 class RawResume(BaseModel):
     content: str | None = None
     processing_status: str = "pending"
-exec(_bootstrap_code, globals())
 class ResumeFetchData(BaseModel):
     raw_resume: RawResume
     cover_letter: str | None = None
@@ -214,6 +206,79 @@ def normalize_scheduled_scan_settings_input(settings: dict[str, Any]) -> dict[st
             str(settings.get("scheduled_scan_feishu_webhook_url", "")),
         ),
     }
+
+
+def build_scheduled_scan_chat_settings(
+    config: ScheduledScanConfig,
+    assets: MultilingualResumeAssets,
+) -> ChatSettings:
+    return ChatSettings(
+        inputs=[
+            Switch(
+                id="scheduled_scan_enabled",
+                label="Enable auto scan",
+                initial=config.enabled,
+                tooltip="Master switch for the daily scan.",
+            ),
+            TextInput(
+                id="scheduled_scan_run_time_local",
+                label="Run time",
+                initial=config.run_time_local,
+                placeholder="21:30",
+                tooltip="Use HH:MM format.",
+            ),
+            TextInput(
+                id="scheduled_scan_timezone",
+                label="Timezone",
+                initial=config.timezone,
+                placeholder="Australia/Sydney",
+                tooltip="Use an IANA timezone name.",
+            ),
+            Slider(
+                id="scheduled_scan_high_score_threshold",
+                label="High score threshold",
+                initial=config.high_score_threshold,
+                min=0,
+                max=1,
+                step=0.05,
+                tooltip="Only jobs at or above this score count as high-score unapplied.",
+            ),
+            Switch(
+                id="scheduled_scan_seek_enabled",
+                label="Enable SEEK",
+                initial=config.seek_enabled,
+                disabled=not bool(assets.resume_en_id),
+                tooltip="Requires an English resume.",
+            ),
+            Switch(
+                id="scheduled_scan_doda_enabled",
+                label="Enable doda",
+                initial=config.doda_enabled,
+                disabled=not bool(assets.resume_ja_id),
+                tooltip="Requires a Japanese resume.",
+            ),
+            Switch(
+                id="scheduled_scan_boss_enabled",
+                label="Enable BOSS",
+                initial=config.boss_enabled,
+                disabled=not bool(assets.resume_zh_id),
+                tooltip="Requires a Chinese resume.",
+            ),
+            Switch(
+                id="scheduled_scan_feishu_enabled",
+                label="Enable Feishu notifications",
+                initial=config.feishu_enabled,
+                tooltip="Notify only for high-score unapplied jobs.",
+            ),
+            TextInput(
+                id="scheduled_scan_feishu_webhook_url",
+                label="Feishu webhook",
+                initial=config.feishu_webhook_url or "",
+                placeholder="https://open.feishu.cn/...",
+                tooltip="Leave blank or set to none to clear.",
+            ),
+        ]
+    )
 class JobUploadResponse(BaseModel):
     message: str
     job_id: list[str]
@@ -525,57 +590,10 @@ class ResumeMatcherBackend:
             "filename": self._extract_filename(
                 response.headers.get("Content-Disposition"),
                 "tailored_resume.pdf",
-def build_scheduled_scan_chat_settings(
-    config: ScheduledScanConfig,
-    assets: MultilingualResumeAssets,
-) -> ChatSettings:
-    return ChatSettings(
-        inputs=[
-            Switch(
-                id="scheduled_scan_enabled",
-                label="开启自动扫描",
-                initial=config.enabled,
-                tooltip="控制每天自动扫描的总开关",
-            ),
-            TextInput(
-                id="scheduled_scan_run_time_local",
-                label="执行时间",
-                initial=config.run_time_local,
-                placeholder="21:30",
-                tooltip="使用 HH:MM 格式，例如 21:30",
-            ),
-            TextInput(
-                id="scheduled_scan_timezone",
-                label="时区",
-                initial=config.timezone,
-                placeholder="Australia/Sydney",
-                tooltip="使用 IANA 时区名称",
-            ),
-            Slider(
-                id="scheduled_scan_high_score_threshold",
-                label="高分阈值",
-                initial=config.high_score_threshold,
-                min=0,
-                max=1,
-                step=0.05,
-                tooltip="只有达到这个分数的岗位才会进入高分未投递列表",
-            ),
-            Switch(
-                id="scheduled_scan_seek_enabled",
-                label="启用 SEEK",
-                initial=config.seek_enabled,
-                disabled=not bool(assets.resume_en_id),
-                tooltip="需要先上传英文简历",
-            ),
-            Switch(
-                id="scheduled_scan_doda_enabled",
-                label="启用 doda",
-                initial=config.doda_enabled,
-                disabled=not bool(assets.resume_ja_id),
-                tooltip="需要先上传日文简历",
             ),
             "content": response.content,
         }
+
     async def scan_jobs(self) -> CareerOpsScanResponse:
         async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
@@ -848,12 +866,6 @@ class InMemoryTestBackend:
             job_description=self.job_descriptions.get(
                 job_id,
                 "Responsibilities: build APIs. Requirements: Python and FastAPI.",
-            Switch(
-                id="scheduled_scan_boss_enabled",
-                label="启用 BOSS直聘",
-                initial=config.boss_enabled,
-                disabled=not bool(assets.resume_zh_id),
-                tooltip="需要先上传中文简历",
             ),
             include_resume_id=True,
         )
@@ -1127,20 +1139,9 @@ async def sync_thread_metadata(*, clear_thread_name: bool = False) -> None:
             SESSION_LAST_UPLOAD_NAME: cl.user_session.get(SESSION_LAST_UPLOAD_NAME),
             SESSION_LAST_TAILORED_RESUME_ID: cl.user_session.get(
                 SESSION_LAST_TAILORED_RESUME_ID
-            Switch(
-                id="scheduled_scan_feishu_enabled",
-                label="启用飞书通知",
-                initial=config.feishu_enabled,
-                tooltip="发现高分未投递岗位后通过飞书 webhook 推送",
             ),
             SESSION_LAST_JOB_DESCRIPTION: cl.user_session.get(
                 SESSION_LAST_JOB_DESCRIPTION
-            TextInput(
-                id="scheduled_scan_feishu_webhook_url",
-                label="飞书 Webhook",
-                initial=config.feishu_webhook_url or "",
-                placeholder="https://open.feishu.cn/...",
-                tooltip="留空或填 none 会清空 webhook",
             ),
             SESSION_THREAD_NAMED: cl.user_session.get(SESSION_THREAD_NAMED),
         },
@@ -1929,20 +1930,27 @@ async def handle_view_scheduled_scan_settings() -> None:
     result = await backend.get_scheduled_scan_settings()
     content = (
         f"{format_scheduled_scan_settings(result)}\n\n"
+        "```yaml\n"
+        f"{render_scheduled_scan_config(result.config)}\n"
+        "```"
+    )
+    await cl.Message(
+        content=content,
+        actions=build_tool_actions()
+        + build_scheduled_scan_form_actions(result.config)
+        + build_discovered_job_actions(result.high_score_unapplied_jobs),
+    ).send()
+
 async def handle_start_scheduled_scan_update() -> None:
     result = await backend.get_scheduled_scan_settings()
-    cl.user_session.set(SESSION_PENDING_ACTION, PENDING_UPDATE_SCHEDULED_SCAN)
     cl.user_session.set(SESSION_PENDING_ACTION, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, True)
     await cl.Message(
         content=(
-            "自动扫描现在可以像表单一样改了：直接点下面的按钮切换开关，或点“设置时间 / 设置阈值 / 设置飞书 Webhook”后按提示输入。\n\n"
-            "如果你想一次性粘贴整段配置，我也仍然支持 YAML/JSON。\n\n"
-            "当前设置：\n"
-            "自动扫描设置已经打开成可视化表单了，你可以直接改开关、时间、阈值和飞书 Webhook，改动会自动保存。\n\n"
-            "如果你还是想整段粘贴配置，也可以继续发 YAML/JSON 给我。\n\n"
-            "当前配置：\n"
+            "??????????????????????????????????? Webhook?????????\n\n"
+            "??????????????????? YAML/JSON ???\n\n"
+            "?????\n"
             "```yaml\n"
             f"{render_scheduled_scan_config(result.config)}\n"
             "```"
@@ -1951,6 +1959,17 @@ async def handle_start_scheduled_scan_update() -> None:
     ).send()
     await build_scheduled_scan_chat_settings(result.config, result.assets).send()
 async def handle_scheduled_scan_update_submission(user_text: str) -> None:
+    edit_field = cl.user_session.get(SESSION_SCHEDULED_SCAN_EDIT_FIELD)
+    if edit_field:
+        current = await backend.get_scheduled_scan_settings()
+        updated_payload = current.config.model_dump(exclude_none=True)
+        updated_payload[edit_field] = parse_scheduled_scan_field_input(edit_field, user_text)
+        validated = ScheduledScanConfig.model_validate(updated_payload)
+    else:
+        payload = parse_scheduled_scan_config_input(user_text)
+        validated = ScheduledScanConfig.model_validate(payload)
+    saved = await backend.update_scheduled_scan_settings(
+        validated.model_dump(exclude_none=True)
     )
     cl.user_session.set(SESSION_PENDING_ACTION, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
@@ -1958,10 +1977,19 @@ async def handle_scheduled_scan_update_submission(user_text: str) -> None:
     await cl.Message(
         content=(
             f"{format_scheduled_scan_settings(saved)}\n\n"
+            "```yaml\n"
+            f"{render_scheduled_scan_config(saved.config)}\n"
+            "```"
+        ),
+        actions=build_tool_actions()
+        + build_scheduled_scan_form_actions(saved.config)
+        + build_discovered_job_actions(saved.high_score_unapplied_jobs),
     ).send()
+
 async def handle_mark_job_applied(job_key: str) -> None:
     await backend.mark_discovered_job_status(job_key, "applied")
     await handle_view_scheduled_scan_settings()
+
 async def handle_toggle_scheduled_scan_field(field: str, value: Any) -> None:
     cl.user_session.set(SESSION_PENDING_ACTION, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
@@ -1969,14 +1997,26 @@ async def handle_toggle_scheduled_scan_field(field: str, value: Any) -> None:
     current = await backend.get_scheduled_scan_settings()
     payload = current.config.model_dump(exclude_none=True)
     payload[field] = value
+    saved = await backend.update_scheduled_scan_settings(payload)
+    await cl.Message(
+        content=f"??? `{field}`?",
+        actions=build_tool_actions()
+        + build_scheduled_scan_form_actions(saved.config)
+        + build_discovered_job_actions(saved.high_score_unapplied_jobs),
+    ).send()
+    await handle_view_scheduled_scan_settings()
+
 async def handle_prompt_scheduled_scan_field(field: str) -> None:
     cl.user_session.set(SESSION_PENDING_ACTION, PENDING_UPDATE_SCHEDULED_SCAN)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, field)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, False)
     prompts = {
-        "run_time_local": "回复新的每日执行时间，例如 `21:30`。",
-        "high_score_threshold": "回复新的高分阈值，例如 `0.85`。",
-        content=prompts.get(field, "请回复新的字段值。"),
+        "run_time_local": "????????????? `21:30`?",
+        "high_score_threshold": "??????????? `0.85`?",
+        "feishu_webhook_url": "?????? Webhook ??????????? `none`?",
+    }
+    await cl.Message(
+        content=prompts.get(field, "?????????"),
         actions=build_tool_actions(),
     ).send()
 async def handle_generate_tailored_pdf(
@@ -2094,18 +2134,22 @@ async def on_evaluate_job_action(_: Any) -> None:
     ).send()
 @cl.action_callback(ACTION_REUPLOAD_MASTER_RESUME)
 async def on_reupload_master_resume_action(_: Any) -> None:
-    await ask_for_resume_upload("请重新上传主简历；新文件会直接覆盖当前主简历记录。")
+    await ask_for_resume_upload("?????????????????????????")
+
 @cl.action_callback(ACTION_UPLOAD_EN_RESUME)
 async def on_upload_en_resume_action(_: Any) -> None:
     await ask_for_resume_upload(
-        "请上传英文简历；它会作为当前默认主简历并用于 SEEK 搜索。",
+        "?????????????????????? SEEK ???",
         resume_language="en",
     )
+
 @cl.action_callback(ACTION_UPLOAD_JA_RESUME)
 async def on_upload_ja_resume_action(_: Any) -> None:
     await ask_for_resume_upload(
-        "请上传日文简历；它会绑定到日文站点能力。",
+        "????????????????????",
         resume_language="ja",
+    )
+
 async def handle_scheduled_scan_settings_form_update(settings: dict[str, Any]) -> None:
     current = await backend.get_scheduled_scan_settings()
     updated_payload = current.config.model_dump(exclude_none=True)
@@ -2114,10 +2158,27 @@ async def handle_scheduled_scan_settings_form_update(settings: dict[str, Any]) -
     saved = await backend.update_scheduled_scan_settings(
         validated.model_dump(exclude_none=True)
     )
+    cl.user_session.set(SESSION_PENDING_ACTION, None)
+    cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
+    cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, True)
+    await cl.Message(
+        content=(
+            "??????????????\n\n"
+            f"{format_scheduled_scan_settings(saved)}\n\n"
+            "`yaml\n"
+            f"{render_scheduled_scan_config(saved.config)}\n"
+            "`"
+        ),
+        actions=build_tool_actions()
+        + build_scheduled_scan_form_actions(saved.config)
+        + build_discovered_job_actions(saved.high_score_unapplied_jobs),
+    ).send()
+    await build_scheduled_scan_chat_settings(saved.config, saved.assets).send()
+
 @cl.action_callback(ACTION_UPLOAD_ZH_RESUME)
 async def on_upload_zh_resume_action(_: Any) -> None:
     await ask_for_resume_upload(
-        "请上传中文简历；它会绑定到中文站点能力。",
+        "????????????????????",
         resume_language="zh",
     )
 @cl.action_callback(ACTION_DOWNLOAD_TAILORED_PDF)
@@ -2177,36 +2238,32 @@ async def on_delete_current_thread_action(_: Any) -> None:
     cl.user_session.set(SESSION_THREAD_NAMED, False)
     cl.user_session.set(SESSION_PENDING_ACTION, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
-    cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, True)
+    cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, False)
     await cl.Message(
-        content="当前对话历史已经清空，后续消息会作为新的会话继续记录。",
+        content="Current thread history was cleared. New messages will continue in a fresh thread.",
         actions=build_tool_actions(),
-        content=(
-            "自动扫描设置已通过表单保存。\n\n"
-            f"{format_scheduled_scan_settings(saved)}\n\n"
-            "```yaml\n"
-            f"{render_scheduled_scan_config(saved.config)}\n"
-            "```"
-        ),
-        actions=build_tool_actions()
-        + build_scheduled_scan_form_actions(saved.config)
-        + build_discovered_job_actions(saved.high_score_unapplied_jobs),
     ).send()
-    await build_scheduled_scan_chat_settings(saved.config, saved.assets).send()
+
+
+@cl.on_settings_update
+async def on_settings_update(settings: dict[str, Any]) -> None:
+    if not cl.user_session.get(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE):
+        return
+    await handle_scheduled_scan_settings_form_update(settings)
+
+
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     uploaded_files = extract_supported_files(getattr(message, "elements", None))
     if uploaded_files:
         await process_resume_upload(uploaded_files[0])
-@cl.on_settings_update
-async def on_settings_update(settings: dict[str, Any]) -> None:
-    if not cl.user_session.get(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE):
         return
+
     resume_id = await get_resume_id_from_session()
     user_text = (message.content or "").strip()
     if not user_text:
         await cl.Message(
-            content="你可以直接贴一个 JD，或者告诉我你想让我先做什么。",
+            content="You can paste a JD directly, or tell me what you want me to do next.",
         ).send()
         return
     if not cl.user_session.get(SESSION_THREAD_NAMED):
@@ -2254,7 +2311,7 @@ async def on_settings_update(settings: dict[str, Any]) -> None:
             return
         if not resume_id:
             await cl.Message(
-                content="先把主简历上传给我吧。上传后我就能继续帮你分析和优化。",
+                content="Upload a primary resume first, then I can keep helping with analysis and optimization.",
             ).send()
             return
         if is_career_ops_evaluate_request(user_text):
@@ -2271,14 +2328,13 @@ async def on_settings_update(settings: dict[str, Any]) -> None:
         detail = exc.response.text.strip() or exc.response.reason_phrase
         await cl.Message(
             content=(
-                "后端接口这次没有成功返回结果，我把关键信息贴给你：\n\n"
-                f"- 状态码：`{exc.response.status_code}`\n"
-                f"- 返回内容：`{detail[:300]}`\n\n"
-                "你可以把同一份 JD 再发一次，我也可以继续帮你排查。"
+                "The backend did not return a successful result this time.\n\n"
+                f"- status: `{exc.response.status_code}`\n"
+                f"- detail: `{detail[:300]}`\n\n"
+                "Send the same JD again and I can keep debugging with you."
             )
         ).send()
     except Exception as exc:  # pragma: no cover - defensive branch
         await cl.Message(
-            content=f"这次处理时出了点问题：`{str(exc)[:300]}`",
+            content=f"Something went wrong while handling this request: `{str(exc)[:300]}`",
         ).send()
-    await handle_scheduled_scan_settings_form_update(settings)
