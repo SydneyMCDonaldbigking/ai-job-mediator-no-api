@@ -1,0 +1,34 @@
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+INFO:     127.0.0.1:60069 - "POST /api/v1/config/llm-test HTTP/1.1" 200 OK
+
+[1;31mProvider List: https://docs.litellm.ai/docs/providers[0m
+
+INFO:     127.0.0.1:59928 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59928 - "POST /api/v1/jobs/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59928 - "POST /api/v1/resumes/improve HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:63335 - "POST /api/v1/config/llm-test HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64448 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64448 - "POST /api/v1/jobs/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64448 - "POST /api/v1/resumes/improve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53495 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57141 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61519 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52690 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49849 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55357 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50643 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56298 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51889 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55892 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63829 - "GET /api/v1/resumes?resume_id=b52b3240-7270-4332-b100-bab547f8111c HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63831 - "POST /api/v1/jobs/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63833 - "POST /api/v1/resumes/improve HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55413 - "POST /api/v1/resumes/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64006 - "GET /api/v1/resumes?resume_id=f3a5a8bf-9ec0-45bf-8bea-e5eae1fb8899 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64008 - "POST /api/v1/jobs/upload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64010 - "POST /api/v1/resumes/improve HTTP/1.1" 200 OK

@@ -1,0 +1,8 @@
+# Tailored Resume
+
+Optimized for: Responsibilities: build APIs
+Requirements: Python and FastAPI
+
+- Python
+- FastAPI
+- Delivery impact

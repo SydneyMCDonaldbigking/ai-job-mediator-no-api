@@ -1,0 +1,11 @@
+[
+  {
+    "id": "4bce4f70-d70c-43f5-ac1e-7083106ceb2b",
+    "createdAt": "2026-04-14T12:54:26.533886Z",
+    "identifier": "local-user",
+    "display_name": "Local User",
+    "metadata": {
+      "role": "local-user"
+    }
+  }
+]
