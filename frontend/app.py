@@ -1948,9 +1948,9 @@ async def handle_start_scheduled_scan_update() -> None:
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, True)
     await cl.Message(
         content=(
-            "??????????????????????????????????? Webhook?????????\n\n"
-            "??????????????????? YAML/JSON ???\n\n"
-            "?????\n"
+            "Scheduled scan visual settings are ready. Toggle switches below or set the time, threshold, and Feishu webhook directly.\n\n"
+            "If you still prefer to paste the full config, YAML/JSON input is still supported.\n\n"
+            "Current config:\n"
             "```yaml\n"
             f"{render_scheduled_scan_config(result.config)}\n"
             "```"
@@ -1999,7 +1999,7 @@ async def handle_toggle_scheduled_scan_field(field: str, value: Any) -> None:
     payload[field] = value
     saved = await backend.update_scheduled_scan_settings(payload)
     await cl.Message(
-        content=f"??? `{field}`?",
+        content=f"Updated `{field}`.",
         actions=build_tool_actions()
         + build_scheduled_scan_form_actions(saved.config)
         + build_discovered_job_actions(saved.high_score_unapplied_jobs),
@@ -2011,12 +2011,12 @@ async def handle_prompt_scheduled_scan_field(field: str) -> None:
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, field)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, False)
     prompts = {
-        "run_time_local": "????????????? `21:30`?",
-        "high_score_threshold": "??????????? `0.85`?",
-        "feishu_webhook_url": "?????? Webhook ??????????? `none`?",
+        "run_time_local": "Reply with the new daily run time, for example `21:30`.",
+        "high_score_threshold": "Reply with the new high-score threshold, for example `0.85`.",
+        "feishu_webhook_url": "Reply with the Feishu webhook URL, or send `none` to clear it.",
     }
     await cl.Message(
-        content=prompts.get(field, "?????????"),
+        content=prompts.get(field, "Reply with the new value."),
         actions=build_tool_actions(),
     ).send()
 async def handle_generate_tailored_pdf(
@@ -2134,19 +2134,21 @@ async def on_evaluate_job_action(_: Any) -> None:
     ).send()
 @cl.action_callback(ACTION_REUPLOAD_MASTER_RESUME)
 async def on_reupload_master_resume_action(_: Any) -> None:
-    await ask_for_resume_upload("?????????????????????????")
+    await ask_for_resume_upload(
+        "Please upload a new primary resume. It will replace the current primary resume."
+    )
 
 @cl.action_callback(ACTION_UPLOAD_EN_RESUME)
 async def on_upload_en_resume_action(_: Any) -> None:
     await ask_for_resume_upload(
-        "?????????????????????? SEEK ???",
+        "Please upload an English resume. It will be used for SEEK searches.",
         resume_language="en",
     )
 
 @cl.action_callback(ACTION_UPLOAD_JA_RESUME)
 async def on_upload_ja_resume_action(_: Any) -> None:
     await ask_for_resume_upload(
-        "????????????????????",
+        "Please upload a Japanese resume. It will be linked to Japanese job sites.",
         resume_language="ja",
     )
 
@@ -2163,11 +2165,11 @@ async def handle_scheduled_scan_settings_form_update(settings: dict[str, Any]) -
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, True)
     await cl.Message(
         content=(
-            "??????????????\n\n"
+            "Scheduled scan settings were saved from the form.\n\n"
             f"{format_scheduled_scan_settings(saved)}\n\n"
-            "`yaml\n"
+            "```yaml\n"
             f"{render_scheduled_scan_config(saved.config)}\n"
-            "`"
+            "```"
         ),
         actions=build_tool_actions()
         + build_scheduled_scan_form_actions(saved.config)
@@ -2178,7 +2180,7 @@ async def handle_scheduled_scan_settings_form_update(settings: dict[str, Any]) -
 @cl.action_callback(ACTION_UPLOAD_ZH_RESUME)
 async def on_upload_zh_resume_action(_: Any) -> None:
     await ask_for_resume_upload(
-        "????????????????????",
+        "Please upload a Chinese resume. It will be linked to Chinese job sites.",
         resume_language="zh",
     )
 @cl.action_callback(ACTION_DOWNLOAD_TAILORED_PDF)
