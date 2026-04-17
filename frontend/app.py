@@ -1943,14 +1943,14 @@ async def handle_view_scheduled_scan_settings() -> None:
 
 async def handle_start_scheduled_scan_update() -> None:
     result = await backend.get_scheduled_scan_settings()
-    cl.user_session.set(SESSION_PENDING_ACTION, None)
+    cl.user_session.set(SESSION_PENDING_ACTION, PENDING_UPDATE_SCHEDULED_SCAN)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, True)
     await cl.Message(
         content=(
-            "Scheduled scan visual settings are ready. Toggle switches below or set the time, threshold, and Feishu webhook directly.\n\n"
-            "If you still prefer to paste the full config, YAML/JSON input is still supported.\n\n"
-            "Current config:\n"
+            "自动扫描设置现在支持可视化编辑：你可以直接点下面的开关，或设置时间、阈值和飞书 Webhook。\n\n"
+            "如果你更习惯一次性粘贴配置，我也仍然支持 YAML/JSON。\n\n"
+            "当前设置：\n"
             "```yaml\n"
             f"{render_scheduled_scan_config(result.config)}\n"
             "```"
@@ -2242,7 +2242,7 @@ async def on_delete_current_thread_action(_: Any) -> None:
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, False)
     await cl.Message(
-        content="Current thread history was cleared. New messages will continue in a fresh thread.",
+        content="当前对话历史已经清空，后续消息会作为新的会话继续记录。",
         actions=build_tool_actions(),
     ).send()
 
