@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from app.career_ops.doda_search import run_manual_doda_search
 from app.career_ops.seek_search import run_manual_seek_search
 from app.database import db
 from app.schemas import (
@@ -65,6 +66,20 @@ async def manual_seek_search(
     """Generate SEEK queries from the active resume and return ranked jobs."""
     try:
         return await run_manual_seek_search(
+            resume_id=request.resume_id,
+            location=request.location,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/search/doda", response_model=SeekManualSearchResponse)
+async def manual_doda_search(
+    request: SeekManualSearchRequest,
+) -> SeekManualSearchResponse | dict[str, Any]:
+    """Generate doda queries from the active Japanese resume and return ranked jobs."""
+    try:
+        return await run_manual_doda_search(
             resume_id=request.resume_id,
             location=request.location,
         )

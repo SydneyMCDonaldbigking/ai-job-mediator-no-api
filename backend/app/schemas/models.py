@@ -552,6 +552,7 @@ class SeekRawJob(BaseModel):
     listed_at: str | None = None
     job_url: str = ""
     summary: str | None = None
+    is_new: bool = False
 
 
 class SeekSearchPlan(BaseModel):
@@ -578,6 +579,9 @@ class SeekSearchJob(BaseModel):
     listed_at: str | None = None
     job_url: str = ""
     summary: str | None = None
+    language: str | None = None
+    raw_location_text: str | None = None
+    raw_salary_text: str | None = None
     match_score: float = 0.0
 
 

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.career_ops.doda_search import run_manual_doda_search
 from app.career_ops.seek_search import run_manual_seek_search
 from app.database import db
 from app.schemas.models import (
@@ -257,6 +258,23 @@ async def run_due_scheduled_scan_once() -> None:
         except Exception as exc:
             logger.warning("Scheduled SEEK scan failed: %s", exc)
             errors.append(f"seek: {exc}")
+
+    if "doda" in enabled_sources and assets.resume_ja_id:
+        try:
+            result = await run_manual_doda_search(resume_id=assets.resume_ja_id)
+            persistence = persist_discovered_jobs(
+                result.jobs,
+                existing_jobs=db.get_discovered_jobs_map(),
+                resume_language="ja",
+            )
+            all_new_jobs.extend(persistence.new_jobs)
+            result_counts["doda"] = {
+                "raw_jobs_found": result.stats.raw_jobs_found,
+                "new_jobs": persistence.stats["new_jobs"],
+            }
+        except Exception as exc:
+            logger.warning("Scheduled doda scan failed: %s", exc)
+            errors.append(f"doda: {exc}")
 
     high_score_unapplied_jobs = filter_high_score_unapplied_jobs(
         all_new_jobs,

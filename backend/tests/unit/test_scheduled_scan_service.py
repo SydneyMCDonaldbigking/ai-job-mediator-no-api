@@ -171,6 +171,63 @@ async def test_run_due_scheduled_scan_once_sends_feishu_when_new_jobs_exist():
     mock_feishu.assert_awaited_once()
 
 
+async def test_run_due_scheduled_scan_once_runs_doda_when_japanese_resume_exists():
+    doda_response = type(
+        "DodaResponse",
+        (),
+        {
+            "jobs": [
+                SeekSearchJob(
+                    job_id="doda:https://doda.jp/job/123",
+                    source="doda",
+                    search_keyword="バックエンドエンジニア",
+                    title="バックエンドエンジニア",
+                    company="OpenAI Japan",
+                    location="東京都",
+                    job_url="https://doda.jp/job/123",
+                    match_score=0.88,
+                )
+            ],
+            "stats": type("Stats", (), {"raw_jobs_found": 1})(),
+        },
+    )()
+
+    with (
+        patch(
+            "app.career_ops.scheduled_scan.load_scheduled_scan_config",
+            return_value={
+                "enabled": True,
+                "run_time_local": "09:00",
+                "timezone": "Australia/Sydney",
+                "seek_enabled": False,
+                "doda_enabled": True,
+                "boss_enabled": False,
+                "feishu_enabled": False,
+                "feishu_webhook_url": None,
+                "last_run_date_local": None,
+            },
+        ),
+        patch(
+            "app.career_ops.scheduled_scan.load_multilingual_resume_assets",
+            return_value={
+                "resume_en_id": None,
+                "resume_ja_id": "resume-ja",
+                "resume_zh_id": None,
+            },
+        ),
+        patch(
+            "app.career_ops.scheduled_scan.run_manual_doda_search",
+            new=AsyncMock(return_value=doda_response),
+        ) as mock_doda,
+        patch("app.career_ops.scheduled_scan.save_scheduled_scan_config"),
+        patch("app.career_ops.scheduled_scan.db.get_discovered_jobs_map", return_value={}),
+        patch("app.career_ops.scheduled_scan.db.upsert_discovered_jobs"),
+    ):
+        await run_due_scheduled_scan_once()
+
+    mock_doda.assert_awaited_once()
+
+
 def test_filter_high_score_unapplied_jobs_excludes_applied_and_low_score():
     jobs = [
         DiscoveredJobRecord(
