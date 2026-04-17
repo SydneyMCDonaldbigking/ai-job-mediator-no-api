@@ -423,8 +423,8 @@ class RealBackendSmokeTests(unittest.TestCase):
                 page.get_by_text("Mock market source", exact=False).wait_for(timeout=30000)
 
                 click_latest_enabled_action(page, ACTION_SEARCH_SEEK)
-                page.get_by_text("SEEK \u641c\u7d22\u7ed3\u679c", exact=False).wait_for(timeout=30000)
-                page.get_by_text("python backend engineer", exact=False).wait_for(timeout=30000)
+                page.get_by_text("SEEK \u641c\u7d22\u9762\u677f", exact=False).wait_for(timeout=30000)
+                page.get_by_text("\u804c\u4f4d\u5361\u7247", exact=False).wait_for(timeout=30000)
                 page.get_by_text("Example Co", exact=False).wait_for(timeout=30000)
 
                 click_latest_enabled_action(page, ACTION_VIEW_PORTALS)

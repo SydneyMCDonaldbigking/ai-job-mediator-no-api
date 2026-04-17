@@ -1542,16 +1542,19 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
     stats = result.stats
     source_label = "SEEK" if plan.source == "seek" else plan.source
     lines = [
-        f"### {source_label} 搜索结果",
+        f"### {source_label} 搜索面板",
         "",
+        "### 摘要",
+        f"- 来源：`{source_label}`",
         f"- 地点：`{plan.location}`",
+        f"- 关键词数：`{len(plan.keywords)}`",
         f"- 关键词：{', '.join(plan.keywords)}",
         f"- 原始岗位数：`{stats.raw_jobs_found}`",
         f"- 去重后岗位数：`{stats.jobs_after_dedupe}`",
     ]
     if result.jobs:
-        lines.extend(["", "### 推荐岗位"])
-        for job in result.jobs[:10]:
+        lines.extend(["", "### 职位卡片"])
+        for index, job in enumerate(result.jobs[:10], start=1):
             extras = []
             if job.salary:
                 extras.append(job.salary)
@@ -1559,17 +1562,29 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
                 extras.append(job.work_type)
             if job.listed_at:
                 extras.append(job.listed_at)
-            extra_text = f" | {' | '.join(extras)}" if extras else ""
-            lines.append(
-                f"- [{job.title}]({job.job_url}) | {job.company} | {job.location} | 匹配分 `{job.match_score:.2f}`{extra_text}"
+            lines.extend(
+                [
+                    f"#### {index}. {job.title}",
+                    f"- 公司：`{job.company}`",
+                    f"- 来源：`{job.source}`",
+                    f"- 地点：`{job.location}`",
+                    f"- 匹配分：`{job.match_score:.2f}`",
+                    f"- 搜索词：`{job.search_keyword}`",
+                ]
             )
+            if extras:
+                lines.append(f"- 标签：`{' | '.join(extras)}`")
+            if job.summary:
+                lines.append(f"- 摘要：{job.summary}")
+            lines.append(f"- [打开岗位]({job.job_url})")
+            lines.append("")
     else:
-        lines.extend(["", "这次没有抓到符合条件的 SEEK 岗位。"])
+        lines.extend(["", f"这次没有抓到符合条件的 {source_label} 岗位。"])
     if result.errors:
         lines.extend(["", "### 查询告警"])
         for error in result.errors[:5]:
             lines.append(f"- `{error.search_keyword}`: {error.message}")
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line is not None)
 def format_portals_summary(config: PortalsConfig) -> str:
     return (
         "### Portals 配置已就绪\n\n"
