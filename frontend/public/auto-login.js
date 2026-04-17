@@ -11,17 +11,13 @@
   const currentPath = window.location.pathname.replace(/\/$/, "");
   const loginPath = (rootPath || "") + "/login";
   const isLoginPage = currentPath === loginPath;
-
   async function autoLogin() {
     if (!isLocalHost) return;
-
     try {
       const authConfigResponse = await fetch("/auth/config", { credentials: "include" });
       if (!authConfigResponse.ok) return;
-
       const authConfig = await authConfigResponse.json();
       if (!authConfig?.requireLogin || !authConfig?.passwordAuth) return;
-
       const currentUserResponse = await fetch("/user", { credentials: "include" });
       if (currentUserResponse.ok) {
         sessionStorage.removeItem(attemptKey);
@@ -30,24 +26,19 @@
         }
         return;
       }
-
       if (!isLoginPage) {
         sessionStorage.removeItem(attemptKey);
         return;
       }
-
       if (sessionStorage.getItem(attemptKey) === "1") return;
       sessionStorage.setItem(attemptKey, "1");
-
       await fetch("/logout", {
         method: "POST",
         credentials: "include",
       }).catch(() => null);
-
       const form = new URLSearchParams();
       form.set("username", username);
       form.set("password", password);
-
       const loginResponse = await fetch("/login", {
         method: "POST",
         credentials: "include",
@@ -56,12 +47,10 @@
         },
         body: form.toString(),
       });
-
       if (!loginResponse.ok) {
         sessionStorage.removeItem(attemptKey);
         return;
       }
-
       sessionStorage.removeItem(attemptKey);
       window.location.replace(appRootUrl);
     } catch (error) {
