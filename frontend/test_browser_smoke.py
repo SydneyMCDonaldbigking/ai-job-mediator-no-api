@@ -17,7 +17,8 @@ UPLOAD_PROMPT = "\u8bf7\u4e0a\u4f20\u4f60\u7684\u4e3b\u7b80\u5386"
 UPLOAD_SUCCESS = "\u7b80\u5386\u4e0a\u4f20\u6210\u529f"
 ACTION_DOWNLOAD_PDF = "\u4e0b\u8f7d ATS PDF"
 ACTION_REUPLOAD = "\u91cd\u65b0\u4e0a\u4f20\u4e3b\u7b80\u5386"
-TOOL_PANEL_TITLE = "\u5e38\u7528\u529f\u80fd"
+LOGIN_USERNAME = "local-user"
+LOGIN_PASSWORD = "job-mediator-123"
 
 
 def pick_free_port() -> int:
@@ -112,6 +113,38 @@ def click_latest_enabled_action(page, label: str) -> None:
     raise AssertionError(f"No enabled action button found for: {label}")
 
 
+def authenticate_browser_context(browser, base_url: str):
+    response = httpx.post(
+        f"{base_url}/login",
+        data={"username": LOGIN_USERNAME, "password": LOGIN_PASSWORD},
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    token = response.cookies.get("access_token")
+    if not token:
+        raise AssertionError("Login did not return an access_token cookie.")
+    context = browser.new_context()
+    context.add_cookies(
+        [
+            {
+                "name": "access_token",
+                "value": token,
+                "url": base_url,
+                "httpOnly": False,
+            }
+        ]
+    )
+    return context
+
+
+def wait_for_body_text(page, text: str, timeout: float = 20000) -> None:
+    page.wait_for_function(
+        "(expected) => document.body && document.body.innerText.includes(expected)",
+        arg=text,
+        timeout=timeout,
+    )
+
+
 class BrowserSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -176,37 +209,62 @@ class BrowserSmokeTests(unittest.TestCase):
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
-                page = browser.new_page()
+                context = authenticate_browser_context(browser, base_url)
+                page = context.new_page()
+                console_logs: list[str] = []
+                page_errors: list[str] = []
+                page.on("console", lambda message: console_logs.append(f"{message.type}: {message.text}"))
+                page.on("pageerror", lambda error: page_errors.append(str(error)))
                 page.goto(base_url, wait_until="domcontentloaded")
 
-                page.locator("#ask-button-input").wait_for(timeout=20000)
-                page.get_by_text(TOOL_PANEL_TITLE, exact=False).wait_for(timeout=20000)
-                page.locator("[data-tool-card-label='SEEK 搜索岗位']").wait_for(timeout=20000)
-                page.locator("#ask-button-input").set_input_files(str(pdf_path))
-                page.get_by_text(UPLOAD_SUCCESS, exact=False).wait_for(timeout=20000)
+                file_input = page.locator("input[type='file']").first
+                file_input.wait_for(state="attached", timeout=20000)
+                page.locator("[data-tool-card-label='SEEK 搜索岗位']").first.wait_for(
+                    state="attached",
+                    timeout=20000,
+                )
+                wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
+                file_input.set_input_files(str(pdf_path))
+                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
 
                 send_chat_message(
                     page,
                     "Responsibilities: build APIs\nRequirements: Python and FastAPI",
                 )
-                page.get_by_text("tailored_resume.md", exact=False).wait_for(timeout=20000)
+                wait_for_body_text(page, "tailored_resume.md", timeout=20000)
 
                 click_latest_enabled_action(page, ACTION_DOWNLOAD_PDF)
-                page.get_by_text("tailored_resume.pdf", exact=False).wait_for(timeout=20000)
+                wait_for_body_text(page, "tailored_resume.pdf", timeout=20000)
 
                 click_latest_enabled_action(page, ACTION_REUPLOAD)
-                page.locator("#ask-button-input").set_input_files(str(docx_path))
-                page.get_by_text(UPLOAD_SUCCESS, exact=False).wait_for(timeout=20000)
+                page.locator("input[type='file']").first.set_input_files(str(docx_path))
+                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
 
                 send_chat_message(
                     page,
                     "Responsibilities: scale services\nRequirements: Python and distributed systems",
                 )
-                page.get_by_text("tailored resume_id", exact=False).wait_for(timeout=20000)
+                wait_for_body_text(page, "tailored resume_id", timeout=20000)
+                context.close()
                 browser.close()
         except Exception as exc:  # pragma: no cover - diagnostic path
             log_output = self.log_path.read_text(encoding="utf-8", errors="ignore")
-            raise AssertionError(f"Browser smoke failed.\n\nChainlit log:\n{log_output}") from exc
+            page_snapshot = ""
+            page_url = "<unavailable>"
+            if "page" in locals():
+                try:
+                    page_url = page.url
+                    page_snapshot = page.content()
+                except Exception:
+                    page_snapshot = "<unable to capture page text>"
+            raise AssertionError(
+                "Browser smoke failed.\n\n"
+                f"Page URL:\n{page_url}\n\n"
+                f"Page errors:\n{page_errors if 'page_errors' in locals() else []}\n\n"
+                f"Console logs:\n{console_logs if 'console_logs' in locals() else []}\n\n"
+                f"Page text:\n{page_snapshot}\n\n"
+                f"Chainlit log:\n{log_output}"
+            ) from exc
 
 
 if __name__ == "__main__":

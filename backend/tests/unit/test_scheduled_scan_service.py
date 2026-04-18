@@ -162,6 +162,10 @@ async def test_run_due_scheduled_scan_once_sends_feishu_when_new_jobs_exist():
             "app.career_ops.scheduled_scan.send_feishu_webhook_message",
             new=AsyncMock(),
         ) as mock_feishu,
+        patch(
+            "app.career_ops.scheduled_scan.should_run_scheduled_scan",
+            return_value=True,
+        ),
         patch("app.career_ops.scheduled_scan.save_scheduled_scan_config"),
         patch("app.career_ops.scheduled_scan.db.get_discovered_jobs_map", return_value={}),
         patch("app.career_ops.scheduled_scan.db.upsert_discovered_jobs"),
@@ -219,6 +223,10 @@ async def test_run_due_scheduled_scan_once_runs_doda_when_japanese_resume_exists
             "app.career_ops.scheduled_scan.run_manual_doda_search",
             new=AsyncMock(return_value=doda_response),
         ) as mock_doda,
+        patch(
+            "app.career_ops.scheduled_scan.should_run_scheduled_scan",
+            return_value=True,
+        ),
         patch("app.career_ops.scheduled_scan.save_scheduled_scan_config"),
         patch("app.career_ops.scheduled_scan.db.get_discovered_jobs_map", return_value={}),
         patch("app.career_ops.scheduled_scan.db.upsert_discovered_jobs"),

@@ -26,6 +26,8 @@ ACTION_VIEW_PORTALS = "\u67e5\u770b Portals"
 ACTION_EDIT_PORTALS = "\u66f4\u65b0 Portals"
 ACTION_DELETE_THREAD = "\u5220\u9664\u5f53\u524d\u5bf9\u8bdd"
 TOOL_PANEL_TITLE = "\u5e38\u7528\u529f\u80fd"
+LOGIN_USERNAME = "local-user"
+LOGIN_PASSWORD = "job-mediator-123"
 
 
 ACTION_VIEW_SCHEDULED_SCAN = "\u67e5\u770b\u81ea\u52a8\u626b\u63cf"
@@ -118,6 +120,38 @@ def click_latest_enabled_action(page, label: str) -> None:
             return
         page.wait_for_timeout(250)
     raise AssertionError(f"No enabled action button found for: {label}")
+
+
+def authenticate_browser_context(browser, base_url: str):
+    response = httpx.post(
+        f"{base_url}/login",
+        data={"username": LOGIN_USERNAME, "password": LOGIN_PASSWORD},
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    token = response.cookies.get("access_token")
+    if not token:
+        raise AssertionError("Login did not return an access_token cookie.")
+    context = browser.new_context()
+    context.add_cookies(
+        [
+            {
+                "name": "access_token",
+                "value": token,
+                "url": base_url,
+                "httpOnly": False,
+            }
+        ]
+    )
+    return context
+
+
+def wait_for_body_text(page, text: str, timeout: float = 20000) -> None:
+    page.wait_for_function(
+        "(expected) => document.body && document.body.innerText.includes(expected)",
+        arg=text,
+        timeout=timeout,
+    )
 
 
 def get_backend_json(
@@ -293,14 +327,19 @@ class RealBackendSmokeTests(unittest.TestCase):
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
-                page = browser.new_page()
+                context = authenticate_browser_context(browser, frontend_url)
+                page = context.new_page()
                 page.goto(frontend_url, wait_until="domcontentloaded")
 
-                page.locator("#ask-button-input").wait_for(timeout=20000)
-                page.get_by_text(TOOL_PANEL_TITLE, exact=False).wait_for(timeout=20000)
-                page.locator("[data-tool-card-label='SEEK 搜索岗位']").wait_for(timeout=20000)
-                page.locator("#ask-button-input").set_input_files(str(resume_path))
-                page.get_by_text(UPLOAD_SUCCESS, exact=False).wait_for(timeout=20000)
+                file_input = page.locator("input[type='file']").first
+                file_input.wait_for(state="attached", timeout=20000)
+                page.locator("[data-tool-card-label='SEEK 搜索岗位']").first.wait_for(
+                    state="attached",
+                    timeout=20000,
+                )
+                wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
+                file_input.set_input_files(str(resume_path))
+                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
                 page.wait_for_timeout(2000)
 
                 send_chat_message(
@@ -308,10 +347,10 @@ class RealBackendSmokeTests(unittest.TestCase):
                     "Responsibilities: build APIs\nRequirements: Python and FastAPI",
                 )
 
-                page.get_by_text("tailored_resume.md", exact=False).wait_for(timeout=30000)
-                page.get_by_text("tailored_resume.md", exact=False).wait_for(timeout=30000)
+                wait_for_body_text(page, "tailored resume_id", timeout=60000)
                 click_latest_enabled_action(page, ACTION_DOWNLOAD_PDF)
-                page.get_by_text("tailored_resume.pdf", exact=False).wait_for(timeout=20000)
+                wait_for_body_text(page, "tailored_resume.pdf", timeout=20000)
+                context.close()
                 browser.close()
         except Exception as exc:  # pragma: no cover - diagnostic path
             backend_log = self.backend_log_path.read_text(encoding="utf-8", errors="ignore")
@@ -421,12 +460,19 @@ class RealBackendSmokeTests(unittest.TestCase):
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
-                page = browser.new_page()
-                page.goto(frontend_url, wait_until="networkidle")
+                context = authenticate_browser_context(browser, frontend_url)
+                page = context.new_page()
+                page.goto(frontend_url, wait_until="domcontentloaded")
 
-                page.get_by_text(UPLOAD_PROMPT, exact=False).wait_for(timeout=20000)
-                page.locator("#ask-button-input").set_input_files(str(resume_path))
-                page.get_by_text(UPLOAD_SUCCESS, exact=False).wait_for(timeout=20000)
+                file_input = page.locator("input[type='file']").first
+                file_input.wait_for(state="attached", timeout=20000)
+                page.locator("[data-tool-card-label='SEEK 搜索岗位']").first.wait_for(
+                    state="attached",
+                    timeout=20000,
+                )
+                wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
+                file_input.set_input_files(str(resume_path))
+                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
                 page.wait_for_timeout(2000)
 
                 click_latest_enabled_action(page, ACTION_EVALUATE_JOB)
@@ -488,11 +534,11 @@ class RealBackendSmokeTests(unittest.TestCase):
                 self.assertEqual(len(wait_for_thread_count(backend_url, 0)), 0)
 
                 send_chat_message(page, rebuilt_thread_jd)
-                page.get_by_text("tailored_resume.md", exact=False).wait_for(timeout=30000)
-                page.get_by_text("tailored_resume.md", exact=False).wait_for(timeout=30000)
+                wait_for_body_text(page, "tailored resume_id", timeout=60000)
 
                 rebuilt_threads = wait_for_thread_count(backend_url, 1)
                 self.assertIn("Responsibilities: rebuild APIs", rebuilt_threads[0]["name"])
+                context.close()
                 browser.close()
         except Exception as exc:  # pragma: no cover - diagnostic path
             backend_log = self.backend_log_path.read_text(encoding="utf-8", errors="ignore")

@@ -5,41 +5,55 @@
   const panelId = "ai-job-mediator-tool-panel";
   const styleId = "ai-job-mediator-tool-panel-style";
   const managedLabels = [
-    "重新上传主简历",
-    "A-F 职位评估",
-    "下载 ATS PDF",
-    "扫描职位",
-    "SEEK 搜索岗位",
-    "doda 搜索岗位",
-    "上传英文简历",
-    "上传日文简历",
-    "上传中文简历",
-    "查看 Portals",
-    "更新 Portals",
-    "查看自动扫描",
-    "更新自动扫描",
-    "删除当前对话",
+    "\u91cd\u65b0\u4e0a\u4f20\u4e3b\u7b80\u5386",
+    "A-F \u804c\u4f4d\u8bc4\u4f30",
+    "\u4e0b\u8f7d ATS PDF",
+    "\u626b\u63cf\u804c\u4f4d",
+    "SEEK \u641c\u7d22\u5c97\u4f4d",
+    "doda \u641c\u7d22\u5c97\u4f4d",
+    "\u4e0a\u4f20\u82f1\u6587\u7b80\u5386",
+    "\u4e0a\u4f20\u65e5\u6587\u7b80\u5386",
+    "\u4e0a\u4f20\u4e2d\u6587\u7b80\u5386",
+    "\u67e5\u770b Portals",
+    "\u66f4\u65b0 Portals",
+    "\u67e5\u770b\u81ea\u52a8\u626b\u63cf",
+    "\u66f4\u65b0\u81ea\u52a8\u626b\u63cf",
+    "\u5220\u9664\u5f53\u524d\u5bf9\u8bdd",
   ];
   const panelSections = [
     {
-      title: "简历",
-      items: ["重新上传主简历", "上传英文简历", "上传日文简历", "上传中文简历"],
+      title: "\u7b80\u5386",
+      items: [
+        "\u91cd\u65b0\u4e0a\u4f20\u4e3b\u7b80\u5386",
+        "\u4e0a\u4f20\u82f1\u6587\u7b80\u5386",
+        "\u4e0a\u4f20\u65e5\u6587\u7b80\u5386",
+        "\u4e0a\u4f20\u4e2d\u6587\u7b80\u5386",
+      ],
     },
     {
-      title: "岗位搜索",
-      items: ["扫描职位", "SEEK 搜索岗位", "doda 搜索岗位"],
+      title: "\u5c97\u4f4d\u641c\u7d22",
+      items: [
+        "\u626b\u63cf\u804c\u4f4d",
+        "SEEK \u641c\u7d22\u5c97\u4f4d",
+        "doda \u641c\u7d22\u5c97\u4f4d",
+      ],
     },
     {
-      title: "求职操作",
-      items: ["A-F 职位评估", "下载 ATS PDF"],
+      title: "\u6c42\u804c\u64cd\u4f5c",
+      items: ["A-F \u804c\u4f4d\u8bc4\u4f30", "\u4e0b\u8f7d ATS PDF"],
     },
     {
-      title: "配置",
-      items: ["查看 Portals", "更新 Portals", "查看自动扫描", "更新自动扫描"],
+      title: "\u914d\u7f6e",
+      items: [
+        "\u67e5\u770b Portals",
+        "\u66f4\u65b0 Portals",
+        "\u67e5\u770b\u81ea\u52a8\u626b\u63cf",
+        "\u66f4\u65b0\u81ea\u52a8\u626b\u63cf",
+      ],
     },
     {
-      title: "系统",
-      items: ["删除当前对话"],
+      title: "\u7cfb\u7edf",
+      items: ["\u5220\u9664\u5f53\u524d\u5bf9\u8bdd"],
     },
   ];
   const isLocalHost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
@@ -51,6 +65,8 @@
   const currentPath = window.location.pathname.replace(/\/$/, "");
   const loginPath = (rootPath || "") + "/login";
   const isLoginPage = currentPath === loginPath;
+  let refreshScheduled = false;
+  let lastSectionsMarkup = "";
 
   function normalizeLabel(text) {
     return (text || "").replace(/\s+/g, " ").trim();
@@ -185,10 +201,10 @@
 
     panel = document.createElement("aside");
     panel.id = panelId;
-    panel.setAttribute("aria-label", "常用功能");
+    panel.setAttribute("aria-label", "\u5e38\u7528\u529f\u80fd");
     panel.innerHTML = `
-      <h2 class="tool-panel-title">常用功能</h2>
-      <p class="tool-panel-subtitle">右侧固定入口。一个功能一个框，减少聊天流里重复按钮卡住的问题。</p>
+      <h2 class="tool-panel-title">\u5e38\u7528\u529f\u80fd</h2>
+      <p class="tool-panel-subtitle">\u53f3\u4fa7\u56fa\u5b9a\u5165\u53e3\u3002\u4e00\u4e2a\u529f\u80fd\u4e00\u4e2a\u6846\uff0c\u51cf\u5c11\u804a\u5929\u6d41\u91cc\u91cd\u590d\u6309\u94ae\u5361\u4f4f\u7684\u95ee\u9898\u3002</p>
       <div class="tool-panel-sections"></div>
     `;
     document.body.appendChild(panel);
@@ -214,8 +230,12 @@
     buttons.forEach((button) => {
       const label = normalizeLabel(button.innerText);
       if (!managedLabels.includes(label)) return;
-      button.dataset.aiJobToolButton = "true";
-      button.style.display = "none";
+      if (button.dataset.aiJobToolButton !== "true") {
+        button.dataset.aiJobToolButton = "true";
+      }
+      if (button.style.display !== "none") {
+        button.style.display = "none";
+      }
 
       const container = button.parentElement;
       if (!container) return;
@@ -224,7 +244,11 @@
         return !managedLabels.includes(itemLabel);
       });
       if (visibleButtons.length === 0) {
-        container.classList.add("ai-job-tool-actions-hidden");
+        if (!container.classList.contains("ai-job-tool-actions-hidden")) {
+          container.classList.add("ai-job-tool-actions-hidden");
+        }
+      } else if (container.classList.contains("ai-job-tool-actions-hidden")) {
+        container.classList.remove("ai-job-tool-actions-hidden");
       }
     });
   }
@@ -249,7 +273,7 @@
           }
           const tooltip = original
             ? original.getAttribute("title") || original.getAttribute("aria-label") || ""
-            : "页面还在加载这个动作，稍等一下就会变为可点。";
+            : "\u9875\u9762\u8fd8\u5728\u52a0\u8f7d\u8fd9\u4e2a\u52a8\u4f5c\uff0c\u7a0d\u7b49\u4e00\u4e0b\u5c31\u4f1a\u53d8\u4e3a\u53ef\u70b9\u3002";
           return `
             <button
               type="button"
@@ -259,7 +283,7 @@
             >
               <span>
                 <span class="tool-card-label">${label}</span>
-                <span class="tool-card-meta">${tooltip || "点击后会触发当前页面上最新的对应动作。"}</span>
+                <span class="tool-card-meta">${tooltip || "\u70b9\u51fb\u540e\u4f1a\u89e6\u53d1\u5f53\u524d\u9875\u9762\u4e0a\u6700\u65b0\u7684\u5bf9\u5e94\u52a8\u4f5c\u3002"}</span>
               </span>
               <span class="tool-card-badge">${section.title}</span>
             </button>
@@ -275,11 +299,17 @@
       `;
     });
 
-    sectionsHost.innerHTML = fragments.join("");
-    panel.dataset.empty = "false";
+    const sectionsMarkup = fragments.join("");
+    if (sectionsMarkup !== lastSectionsMarkup) {
+      sectionsHost.innerHTML = sectionsMarkup;
+      lastSectionsMarkup = sectionsMarkup;
+    }
+    panel.dataset.empty = actionableCount > 0 ? "false" : "true";
     panel.dataset.ready = actionableCount > 0 ? "true" : "false";
 
     sectionsHost.querySelectorAll("[data-tool-card-label]").forEach((button) => {
+      if (button.dataset.aiJobToolBound === "true") return;
+      button.dataset.aiJobToolBound = "true";
       button.addEventListener("click", () => {
         const label = button.getAttribute("data-tool-card-label");
         const original = getLatestMatchingButton(label);
@@ -289,14 +319,38 @@
     });
   }
 
-  function bootToolPanel() {
-    ensurePanel();
-    hideInlineToolButtons();
-    renderPanel();
-
-    const observer = new MutationObserver(() => {
+  function schedulePanelRefresh() {
+    if (refreshScheduled) return;
+    refreshScheduled = true;
+    window.requestAnimationFrame(() => {
+      refreshScheduled = false;
       hideInlineToolButtons();
       renderPanel();
+    });
+  }
+
+  function mutationNeedsRefresh(mutation) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return true;
+
+    const isPanelNode = (node) => node instanceof Node && panel.contains(node);
+    const targetInsidePanel = mutation.target instanceof Node && panel.contains(mutation.target);
+    const addedOutsidePanel = Array.from(mutation.addedNodes || []).some((node) => !isPanelNode(node));
+    const removedOutsidePanel = Array.from(mutation.removedNodes || []).some((node) => !isPanelNode(node));
+
+    if (addedOutsidePanel || removedOutsidePanel) return true;
+    return !targetInsidePanel;
+  }
+
+  function bootToolPanel() {
+    ensurePanel();
+    schedulePanelRefresh();
+
+    const observer = new MutationObserver((mutations) => {
+      if (!mutations.some(mutationNeedsRefresh)) {
+        return;
+      }
+      schedulePanelRefresh();
     });
     observer.observe(document.body, {
       subtree: true,
@@ -306,10 +360,9 @@
     });
 
     window.addEventListener("load", () => {
-      hideInlineToolButtons();
-      renderPanel();
+      schedulePanelRefresh();
     });
-    window.addEventListener("resize", renderPanel);
+    window.addEventListener("resize", schedulePanelRefresh);
   }
 
   async function autoLogin() {
@@ -329,6 +382,7 @@
       }
       if (!isLoginPage) {
         sessionStorage.removeItem(attemptKey);
+        window.location.replace(loginPath);
         return;
       }
       if (sessionStorage.getItem(attemptKey) === "1") return;

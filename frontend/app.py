@@ -1070,69 +1070,10 @@ def ensure_runtime_assets() -> None:
         if auto_login_js.exists():
             auto_login_js.unlink()
         return
-    script = f"""(function () {{
-  const username = {json.dumps(APP_USERNAME)};
-  const password = {json.dumps(APP_PASSWORD)};
-  const attemptKey = "ai_job_mediator_auto_login_attempted";
-  const isLocalHost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  const rootPath =
-    (document
-      .querySelector('meta[property="og:root_path"]')
-      ?.getAttribute("content") || "").replace(/\\/$/, "");
-  const appRootUrl = window.location.origin + rootPath + "/";
-  const currentPath = window.location.pathname.replace(/\\/$/, "");
-  const loginPath = (rootPath || "") + "/login";
-  const isLoginPage = currentPath === loginPath;
-  async function autoLogin() {{
-    if (!isLocalHost) return;
-    try {{
-      const authConfigResponse = await fetch("/auth/config", {{ credentials: "include" }});
-      if (!authConfigResponse.ok) return;
-      const authConfig = await authConfigResponse.json();
-      if (!authConfig?.requireLogin || !authConfig?.passwordAuth) return;
-      const currentUserResponse = await fetch("/user", {{ credentials: "include" }});
-      if (currentUserResponse.ok) {{
-        sessionStorage.removeItem(attemptKey);
-        if (isLoginPage) {{
-          window.location.replace(appRootUrl);
-        }}
-        return;
-      }}
-      if (!isLoginPage) {{
-        sessionStorage.removeItem(attemptKey);
-        return;
-      }}
-      if (sessionStorage.getItem(attemptKey) === "1") return;
-      sessionStorage.setItem(attemptKey, "1");
-      await fetch("/logout", {{
-        method: "POST",
-        credentials: "include",
-      }}).catch(() => null);
-      const form = new URLSearchParams();
-      form.set("username", username);
-      form.set("password", password);
-      const loginResponse = await fetch("/login", {{
-        method: "POST",
-        credentials: "include",
-        headers: {{
-          "Content-Type": "application/x-www-form-urlencoded",
-        }},
-        body: form.toString(),
-      }});
-      if (!loginResponse.ok) {{
-        sessionStorage.removeItem(attemptKey);
-        return;
-      }}
-      sessionStorage.removeItem(attemptKey);
-      window.location.replace(appRootUrl);
-    }} catch (error) {{
-      sessionStorage.removeItem(attemptKey);
-      console.warn("Local auto-login failed.", error);
-    }}
-  }}
-  autoLogin();
-}})();
-"""
+    source_auto_login_js = APP_DIR / "public" / "auto-login.js"
+    script = source_auto_login_js.read_text(encoding="utf-8")
+    script = script.replace('"local-user"', json.dumps(APP_USERNAME), 1)
+    script = script.replace('"job-mediator-123"', json.dumps(APP_PASSWORD), 1)
     auto_login_js.write_text(script, encoding="utf-8")
 ensure_runtime_assets()
 backend: ResumeMatcherBackend | InMemoryTestBackend
