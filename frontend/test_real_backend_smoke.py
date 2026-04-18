@@ -3,9 +3,9 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import unittest
+import uuid
 
 import httpx
 from playwright.sync_api import sync_playwright
@@ -15,6 +15,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT_DIR / "frontend"
 BACKEND_DIR = ROOT_DIR / "backend"
 BACKEND_RUNNER = BACKEND_DIR / "tests" / "smoke_backend_server.py"
+TEMP_ROOT = ROOT_DIR / ".tmp-smoke-tests"
 
 UPLOAD_PROMPT = "\u8bf7\u4e0a\u4f20\u4f60\u7684\u4e3b\u7b80\u5386"
 UPLOAD_SUCCESS = "\u7b80\u5386\u4e0a\u4f20\u6210\u529f"
@@ -24,6 +25,7 @@ ACTION_SEARCH_SEEK = "SEEK \u641c\u7d22\u5c97\u4f4d"
 ACTION_VIEW_PORTALS = "\u67e5\u770b Portals"
 ACTION_EDIT_PORTALS = "\u66f4\u65b0 Portals"
 ACTION_DELETE_THREAD = "\u5220\u9664\u5f53\u524d\u5bf9\u8bdd"
+TOOL_PANEL_TITLE = "\u5e38\u7528\u529f\u80fd"
 
 
 ACTION_VIEW_SCHEDULED_SCAN = "\u67e5\u770b\u81ea\u52a8\u626b\u63cf"
@@ -86,6 +88,17 @@ def send_chat_message(page, text: str) -> None:
 
 
 def click_latest_enabled_action(page, label: str) -> None:
+    panel_buttons = page.locator(f"[data-tool-card-label='{label}']")
+    for index in range(panel_buttons.count()):
+        button = panel_buttons.nth(index)
+        try:
+            if button.is_visible() and button.is_enabled():
+                button.scroll_into_view_if_needed()
+                button.click(timeout=2000)
+                return
+        except Exception:
+            continue
+
     deadline = time.time() + 20
     while time.time() < deadline:
         buttons = page.get_by_role("button", name=label)
@@ -188,7 +201,9 @@ def wait_for_scheduled_scan_time(
 
 class RealBackendSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_root = Path(tempfile.mkdtemp(prefix="chainlit-real-backend-smoke-"))
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.temp_root = TEMP_ROOT / f"chainlit-real-backend-smoke-{uuid.uuid4().hex[:8]}"
+        self.temp_root.mkdir(parents=True, exist_ok=True)
         self.backend_log_path = self.temp_root / "backend.log"
         self.frontend_log_path = self.temp_root / "frontend.log"
         self.backend_process: subprocess.Popen | None = None
@@ -279,9 +294,11 @@ class RealBackendSmokeTests(unittest.TestCase):
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
                 page = browser.new_page()
-                page.goto(frontend_url, wait_until="networkidle")
+                page.goto(frontend_url, wait_until="domcontentloaded")
 
-                page.get_by_text(UPLOAD_PROMPT, exact=False).wait_for(timeout=20000)
+                page.locator("#ask-button-input").wait_for(timeout=20000)
+                page.get_by_text(TOOL_PANEL_TITLE, exact=False).wait_for(timeout=20000)
+                page.locator("[data-tool-card-label='SEEK 搜索岗位']").wait_for(timeout=20000)
                 page.locator("#ask-button-input").set_input_files(str(resume_path))
                 page.get_by_text(UPLOAD_SUCCESS, exact=False).wait_for(timeout=20000)
                 page.wait_for_timeout(2000)

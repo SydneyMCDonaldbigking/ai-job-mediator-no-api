@@ -3,19 +3,21 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import unittest
+import uuid
 
 import httpx
 from playwright.sync_api import sync_playwright
 
 
 FRONTEND_DIR = Path(__file__).resolve().parent
+TEMP_ROOT = FRONTEND_DIR.parent / ".tmp-smoke-tests"
 UPLOAD_PROMPT = "\u8bf7\u4e0a\u4f20\u4f60\u7684\u4e3b\u7b80\u5386"
 UPLOAD_SUCCESS = "\u7b80\u5386\u4e0a\u4f20\u6210\u529f"
 ACTION_DOWNLOAD_PDF = "\u4e0b\u8f7d ATS PDF"
 ACTION_REUPLOAD = "\u91cd\u65b0\u4e0a\u4f20\u4e3b\u7b80\u5386"
+TOOL_PANEL_TITLE = "\u5e38\u7528\u529f\u80fd"
 
 
 def pick_free_port() -> int:
@@ -78,6 +80,17 @@ def send_chat_message(page, text: str) -> None:
 
 
 def click_latest_enabled_action(page, label: str) -> None:
+    panel_buttons = page.locator(f"[data-tool-card-label='{label}']")
+    for index in range(panel_buttons.count()):
+        button = panel_buttons.nth(index)
+        try:
+            if button.is_visible() and button.is_enabled():
+                button.scroll_into_view_if_needed()
+                button.click(timeout=2000)
+                return
+        except Exception:
+            continue
+
     deadline = time.time() + 20
     while time.time() < deadline:
         buttons = page.get_by_role("button", name=label)
@@ -101,7 +114,9 @@ def click_latest_enabled_action(page, label: str) -> None:
 
 class BrowserSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_root = Path(tempfile.mkdtemp(prefix="chainlit-browser-smoke-"))
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.temp_root = TEMP_ROOT / f"chainlit-browser-smoke-{uuid.uuid4().hex[:8]}"
+        self.temp_root.mkdir(parents=True, exist_ok=True)
         self.log_path = self.temp_root / "chainlit.log"
         self.process: subprocess.Popen | None = None
 
@@ -162,9 +177,11 @@ class BrowserSmokeTests(unittest.TestCase):
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
                 page = browser.new_page()
-                page.goto(base_url, wait_until="networkidle")
+                page.goto(base_url, wait_until="domcontentloaded")
 
-                page.get_by_text(UPLOAD_PROMPT, exact=False).wait_for(timeout=20000)
+                page.locator("#ask-button-input").wait_for(timeout=20000)
+                page.get_by_text(TOOL_PANEL_TITLE, exact=False).wait_for(timeout=20000)
+                page.locator("[data-tool-card-label='SEEK 搜索岗位']").wait_for(timeout=20000)
                 page.locator("#ask-button-input").set_input_files(str(pdf_path))
                 page.get_by_text(UPLOAD_SUCCESS, exact=False).wait_for(timeout=20000)
 
