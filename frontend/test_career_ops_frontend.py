@@ -299,7 +299,10 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertIn("关键词数", message)
         self.assertIn("职位卡片", message)
         self.assertIn("### SEEK 岗位", message)
+        self.assertIn("来源分布", message)
+        self.assertIn("SEEK `1`", message)
         self.assertIn("来源：`SEEK`", message)
+        self.assertIn("匹配等级：`高`", message)
         self.assertIn("[打开岗位](https://www.seek.com.au/job/123)", message)
 
     def test_format_seek_search_result_preserves_doda_source_label(self):
@@ -350,7 +353,9 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertIn("OpenAI Japan", message)
         self.assertIn("职位卡片", message)
         self.assertIn("### doda 岗位", message)
+        self.assertIn("doda `1`", message)
         self.assertIn("来源：`doda`", message)
+        self.assertIn("匹配等级：`高`", message)
         self.assertIn("[打开岗位](https://doda.jp/job/123)", message)
 
     def test_format_scheduled_scan_settings_includes_assets_and_recent_jobs(self):

@@ -1541,6 +1541,9 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
     plan = result.plan
     stats = result.stats
     source_label = "SEEK" if plan.source == "seek" else plan.source
+    grouped_jobs: dict[str, list[SeekSearchJob]] = {}
+    for job in result.jobs[:10]:
+        grouped_jobs.setdefault(job.source, []).append(job)
     lines = [
         f"### {source_label} 搜索面板",
         "",
@@ -1552,11 +1555,14 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
         f"- 原始岗位数：`{stats.raw_jobs_found}`",
         f"- 去重后岗位数：`{stats.jobs_after_dedupe}`",
     ]
+    if grouped_jobs:
+        source_breakdown = []
+        for group_source, jobs in grouped_jobs.items():
+            group_label = "SEEK" if group_source == "seek" else group_source
+            source_breakdown.append(f"{group_label} `{len(jobs)}`")
+        lines.append(f"- 来源分布：{' / '.join(source_breakdown)}")
     if result.jobs:
         lines.extend(["", "### 职位卡片"])
-        grouped_jobs: dict[str, list[SeekSearchJob]] = {}
-        for job in result.jobs[:10]:
-            grouped_jobs.setdefault(job.source, []).append(job)
         for group_source, jobs in grouped_jobs.items():
             group_label = "SEEK" if group_source == "seek" else group_source
             lines.extend(["", f"### {group_label} 岗位"])
@@ -1568,6 +1574,13 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
                     extras.append(job.work_type)
                 if job.listed_at:
                     extras.append(job.listed_at)
+                score_label = (
+                    "\u9ad8"
+                    if job.match_score >= 0.8
+                    else "\u4e2d"
+                    if job.match_score >= 0.6
+                    else "\u4f4e"
+                )
                 lines.extend(
                     [
                         f"#### {index}. {job.title}",
@@ -1575,6 +1588,7 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
                         f"- 来源：`{group_label}`",
                         f"- 地点：`{job.location}`",
                         f"- 匹配分：`{job.match_score:.2f}`",
+                        f"- 匹配等级：`{score_label}`",
                         f"- 搜索词：`{job.search_keyword}`",
                     ]
                 )
