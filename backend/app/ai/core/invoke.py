@@ -46,3 +46,21 @@ async def invoke_json_task(
             "retries": retries,
         }
     )
+
+
+async def invoke_text_task(
+    prompt: str,
+    system_prompt: str | None = None,
+    config: LLMConfig | None = None,
+    max_tokens: int = 2048,
+    temperature: float = 0.7,
+) -> str:
+    from app.llm import complete
+
+    return await complete(
+        prompt=prompt,
+        system_prompt=system_prompt,
+        config=config,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
