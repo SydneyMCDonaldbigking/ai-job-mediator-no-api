@@ -16,7 +16,6 @@ from statistics import mean
 from typing import Any
 
 from app.career_ops.market_data import fetch_market_signals
-from app.llm import complete_json
 from app.schemas.models import (
     CareerOpsEvaluationData,
     CareerOpsMarketData,
@@ -26,6 +25,15 @@ from app.schemas.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def generate_job_evaluation(**kwargs: Any) -> Any:
+    """Lazy task import to avoid evaluator/task prompt circular imports."""
+    from app.ai.tasks.evaluate_job import (
+        generate_job_evaluation as task_generate_job_evaluation,
+    )
+
+    return await task_generate_job_evaluation(**kwargs)
 
 DEFAULT_DIMENSION_BLUEPRINT: list[dict[str, str]] = [
     {
@@ -616,15 +624,13 @@ async def evaluate_job_fit(
 
     raw_result: dict[str, Any] = {}
     try:
-        prompt = build_job_evaluation_prompt(resume=resume_data, job_description=job_description)
-        raw_result = await complete_json(
-            prompt=prompt,
-            system_prompt=(
-                "You are a truthful job-search strategist. "
-                "Never invent compensation facts or experience not present in the resume."
-            ),
-            max_tokens=2400,
+        generated = await generate_job_evaluation(
+            resume_text=resume_to_text(resume_data),
+            job_description=job_description,
+            keyword_targets=keyword_targets,
+            market_context="Market data will be applied after base evaluation.",
         )
+        raw_result = generated.model_dump()
     except Exception as exc:
         logger.warning("Career Ops evaluator fell back to heuristic scoring: %s", exc)
 
