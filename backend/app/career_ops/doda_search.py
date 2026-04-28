@@ -6,6 +6,7 @@ from urllib.parse import quote_plus, urljoin
 
 from playwright.async_api import async_playwright
 
+from app.ai.tasks import generate_search_queries, to_seek_search_plan
 from app.career_ops.seek_search import _resume_from_record, _resume_text, score_seek_job
 from app.database import db
 from app.schemas.models import (
@@ -31,10 +32,21 @@ def localize_location_for_doda(*, country: str, location_text: str) -> str:
     }
     normalized_country = country.strip().upper()
     normalized_location = location_text.strip()
+    if normalized_country == "JP":
+        english_city_aliases = {
+            "tokyo": "Tokyo",
+            "osaka": "Osaka",
+            "kyoto": "Kyoto",
+            "nagoya": "Nagoya",
+        }
+        normalized_location = english_city_aliases.get(
+            normalized_location.casefold(),
+            normalized_location,
+        )
     return mapping.get((normalized_country, normalized_location), normalized_location)
 
 
-def build_doda_search_plan(
+def _build_doda_search_plan_fallback(
     resume: ResumeData,
     *,
     resume_id: str,
@@ -62,6 +74,27 @@ def build_doda_search_plan(
         keywords=list(dict.fromkeys(keywords)),
         location=localize_location_for_doda(country=country, location_text=location_text),
     )
+
+
+async def build_doda_search_plan(
+    resume: ResumeData,
+    *,
+    resume_id: str,
+    country: str = "JP",
+    location_text: str = DEFAULT_DODA_LOCATION,
+) -> SeekSearchPlan:
+    localized = localize_location_for_doda(country=country, location_text=location_text)
+    generated_queries = await generate_search_queries(
+        resume=resume,
+        language="ja",
+        default_location=localized,
+    )
+    plan = to_seek_search_plan(
+        generated_queries,
+        resume_id=resume_id,
+        source="doda",
+    )
+    return plan.model_copy(update={"location": localized})
 
 
 def build_doda_search_url(*, keyword: str, location: str) -> str:
@@ -210,7 +243,7 @@ async def run_manual_doda_search(
         raise ValueError(f"Resume not found: {resume_id}")
 
     resume = _resume_from_record(resume_record)
-    plan = build_doda_search_plan(
+    plan = await build_doda_search_plan(
         resume,
         resume_id=resume_id,
         location_text=location or DEFAULT_DODA_LOCATION,

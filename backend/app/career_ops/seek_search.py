@@ -7,6 +7,7 @@ from urllib.parse import quote_plus, urljoin
 
 from playwright.async_api import async_playwright
 
+from app.ai.tasks import generate_search_queries, to_seek_search_plan
 from app.database import db
 from app.schemas.models import (
     ResumeData,
@@ -29,33 +30,23 @@ def _resume_text(resume: ResumeData) -> str:
         parts.append(entry.title)
     parts.extend(resume.additional.technicalSkills)
     return " ".join(part for part in parts if part).lower()
-
-
-def build_seek_search_plan(
+async def build_seek_search_plan(
     resume: ResumeData,
     *,
     resume_id: str,
     location: str = DEFAULT_SEEK_LOCATION,
 ) -> SeekSearchPlan:
-    text = _resume_text(resume)
-    keywords: list[str] = []
-
-    if "python" in text and "backend" in text:
-        keywords.append("python backend engineer")
-    if "platform" in text or "aws" in text:
-        keywords.append("platform engineer")
-    if "fastapi" in text or "api" in text:
-        keywords.append("backend api engineer")
-    if not keywords:
-        keywords.append("software engineer")
-
-    profile_summary = resume.summary or "Candidate resume profile"
-    return SeekSearchPlan(
-        resume_id=resume_id,
-        candidate_profile_summary=profile_summary,
-        keywords=list(dict.fromkeys(keywords)),
-        location=location,
+    generated_queries = await generate_search_queries(
+        resume=resume,
+        language="en",
+        default_location=location,
     )
+    plan = to_seek_search_plan(
+        generated_queries,
+        resume_id=resume_id,
+        source="seek",
+    )
+    return plan.model_copy(update={"location": location})
 
 
 def build_seek_search_url(*, keyword: str, location: str) -> str:
@@ -222,7 +213,7 @@ async def run_manual_seek_search(
         raise ValueError(f"Resume not found: {resume_id}")
 
     resume = _resume_from_record(resume_record)
-    plan = build_seek_search_plan(
+    plan = await build_seek_search_plan(
         resume,
         resume_id=resume_id,
         location=location or DEFAULT_SEEK_LOCATION,
