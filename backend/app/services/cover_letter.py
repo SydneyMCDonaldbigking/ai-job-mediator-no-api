@@ -2,10 +2,6 @@
 
 from typing import Any
 
-from app.llm import complete
-from app.prompts.templates import GENERATE_TITLE_PROMPT
-from app.prompts import get_language_name
-
 
 async def generate_cover_letter_text(**kwargs) -> str:
     from app.ai.tasks.generate_cover_letter import (
@@ -18,6 +14,14 @@ async def generate_cover_letter_text(**kwargs) -> str:
 async def generate_outreach_message_text(**kwargs) -> str:
     from app.ai.tasks.generate_outreach_message import (
         generate_outreach_message_text as task_impl,
+    )
+
+    return await task_impl(**kwargs)
+
+
+async def generate_resume_title_text(**kwargs) -> str:
+    from app.ai.tasks.generate_resume_title import (
+        generate_resume_title_text as task_impl,
     )
 
     return await task_impl(**kwargs)
@@ -80,18 +84,9 @@ async def generate_resume_title(
     Returns:
         Generated title like "Senior Frontend Engineer @ Stripe"
     """
-    output_language = get_language_name(language)
-
-    prompt = GENERATE_TITLE_PROMPT.format(
+    result = await generate_resume_title_text(
         job_description=job_description,
-        output_language=output_language,
-    )
-
-    result = await complete(
-        prompt=prompt,
-        system_prompt="You extract job titles and company names from job descriptions.",
-        max_tokens=60,
-        temperature=0.3,
+        language=language,
     )
 
     # Strip quotes and whitespace, truncate to 80 chars
