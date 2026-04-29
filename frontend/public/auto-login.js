@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   const username = "local-user";
   const password = "job-mediator-123";
   const attemptKey = "ai_job_mediator_auto_login_attempted";
@@ -166,6 +166,29 @@
         color: rgba(255, 255, 255, 0.62);
         margin-top: 4px;
       }
+      #${panelId} .tool-card-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1;
+      }
+      #${panelId} .tool-card-status::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.95;
+      }
+      #${panelId} .tool-card-status[data-status="ready"] {
+        color: #7ee787;
+      }
+      #${panelId} .tool-card-status[data-status="waiting"] {
+        color: #ffb86b;
+      }
       #${panelId} .tool-card-badge {
         flex: 0 0 auto;
         border-radius: 999px;
@@ -213,6 +236,14 @@
 
   function getLatestMatchingButton(label) {
     const normalizedTarget = normalizeLabel(label);
+    const currentMatch = Array.from(document.querySelectorAll("button")).find(
+      (button) =>
+        button.dataset.aiJobToolCurrent === "true" &&
+        button.dataset.aiJobToolLabel === normalizedTarget
+    );
+    if (currentMatch) {
+      return currentMatch;
+    }
     const buttons = Array.from(document.querySelectorAll("button"));
     const matches = buttons
       .filter((button) => normalizeLabel(button.innerText) === normalizedTarget)
@@ -227,29 +258,48 @@
 
   function hideInlineToolButtons() {
     const buttons = Array.from(document.querySelectorAll("button"));
-    buttons.forEach((button) => {
+    const managedByLabel = new Map();
+
+    buttons.forEach((button, index) => {
       const label = normalizeLabel(button.innerText);
       if (!managedLabels.includes(label)) return;
-      if (button.dataset.aiJobToolButton !== "true") {
-        button.dataset.aiJobToolButton = "true";
-      }
-      if (button.style.display !== "none") {
-        button.style.display = "none";
-      }
+      const bucket = managedByLabel.get(label) || [];
+      bucket.push({ button, index });
+      managedByLabel.set(label, bucket);
+    });
 
-      const container = button.parentElement;
-      if (!container) return;
-      const visibleButtons = Array.from(container.querySelectorAll("button")).filter((item) => {
-        const itemLabel = normalizeLabel(item.innerText);
-        return !managedLabels.includes(itemLabel);
+    managedByLabel.forEach((entries, label) => {
+      const visibleEntries = entries.filter(({ button }) => button.offsetParent !== null);
+      const rankedEntries = (visibleEntries.length ? visibleEntries : entries).sort((left, right) => {
+        const leftRect = left.button.getBoundingClientRect();
+        const rightRect = right.button.getBoundingClientRect();
+        if (rightRect.top !== leftRect.top) return rightRect.top - leftRect.top;
+        return right.index - left.index;
       });
-      if (visibleButtons.length === 0) {
-        if (!container.classList.contains("ai-job-tool-actions-hidden")) {
-          container.classList.add("ai-job-tool-actions-hidden");
+      const currentEntry = rankedEntries[0] || null;
+
+      entries.forEach(({ button }) => {
+        button.dataset.aiJobToolLabel = label;
+        button.dataset.aiJobToolCurrent = button === currentEntry?.button ? "true" : "false";
+        button.dataset.aiJobToolButton = "true";
+        if (button.style.display !== "none") {
+          button.style.display = "none";
         }
-      } else if (container.classList.contains("ai-job-tool-actions-hidden")) {
-        container.classList.remove("ai-job-tool-actions-hidden");
-      }
+
+        const container = button.parentElement;
+        if (!container) return;
+        const visibleButtons = Array.from(container.querySelectorAll("button")).filter((item) => {
+          const itemLabel = normalizeLabel(item.innerText);
+          return !managedLabels.includes(itemLabel);
+        });
+        if (visibleButtons.length === 0) {
+          if (!container.classList.contains("ai-job-tool-actions-hidden")) {
+            container.classList.add("ai-job-tool-actions-hidden");
+          }
+        } else if (container.classList.contains("ai-job-tool-actions-hidden")) {
+          container.classList.remove("ai-job-tool-actions-hidden");
+        }
+      });
     });
   }
 
@@ -274,6 +324,8 @@
           const tooltip = original
             ? original.getAttribute("title") || original.getAttribute("aria-label") || ""
             : "\u9875\u9762\u8fd8\u5728\u52a0\u8f7d\u8fd9\u4e2a\u52a8\u4f5c\uff0c\u7a0d\u7b49\u4e00\u4e0b\u5c31\u4f1a\u53d8\u4e3a\u53ef\u70b9\u3002";
+          const statusLabel = disabled ? "\u7b49\u5f85\u4e2d" : "\u53ef\u7528";
+          const statusKey = disabled ? "waiting" : "ready";
           return `
             <button
               type="button"
@@ -284,6 +336,7 @@
               <span>
                 <span class="tool-card-label">${label}</span>
                 <span class="tool-card-meta">${tooltip || "\u70b9\u51fb\u540e\u4f1a\u89e6\u53d1\u5f53\u524d\u9875\u9762\u4e0a\u6700\u65b0\u7684\u5bf9\u5e94\u52a8\u4f5c\u3002"}</span>
+                <span class="tool-card-status" data-status="${statusKey}">${statusLabel}</span>
               </span>
               <span class="tool-card-badge">${section.title}</span>
             </button>
@@ -304,7 +357,7 @@
       sectionsHost.innerHTML = sectionsMarkup;
       lastSectionsMarkup = sectionsMarkup;
     }
-    panel.dataset.empty = actionableCount > 0 ? "false" : "true";
+    panel.dataset.empty = sectionsMarkup ? "false" : "true";
     panel.dataset.ready = actionableCount > 0 ? "true" : "false";
 
     sectionsHost.querySelectorAll("[data-tool-card-label]").forEach((button) => {

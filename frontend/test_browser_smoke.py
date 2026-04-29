@@ -13,10 +13,11 @@ from playwright.sync_api import sync_playwright
 
 FRONTEND_DIR = Path(__file__).resolve().parent
 TEMP_ROOT = FRONTEND_DIR.parent / ".tmp-smoke-tests"
-UPLOAD_PROMPT = "\u8bf7\u4e0a\u4f20\u4f60\u7684\u4e3b\u7b80\u5386"
-UPLOAD_SUCCESS = "\u7b80\u5386\u4e0a\u4f20\u6210\u529f"
-ACTION_DOWNLOAD_PDF = "\u4e0b\u8f7d ATS PDF"
-ACTION_REUPLOAD = "\u91cd\u65b0\u4e0a\u4f20\u4e3b\u7b80\u5386"
+UPLOAD_PROMPT = "请上传你的主简历"
+UPLOAD_SUCCESS = "简历上传成功"
+ACTION_DOWNLOAD_PDF = "下载 ATS PDF"
+ACTION_REUPLOAD = "重新上传主简历"
+ACTION_SEARCH_SEEK = "SEEK 搜索岗位"
 LOGIN_USERNAME = "local-user"
 LOGIN_PASSWORD = "job-mediator-123"
 
@@ -53,7 +54,7 @@ def send_chat_message(page, text: str) -> None:
     textarea = page.locator("textarea").last
     textarea.fill(text)
 
-    for selector in ("form button[type='submit']", "button[type='submit']"):
+    for selector in ("#chat-submit", "form button[type='submit']", "button[type='submit']"):
         buttons = page.locator(selector)
         candidates = []
         for index in range(buttons.count()):
@@ -145,6 +146,71 @@ def wait_for_body_text(page, text: str, timeout: float = 20000) -> None:
     )
 
 
+def wait_for_current_tool_binding(page, label: str, timeout: float = 20000) -> None:
+    page.wait_for_function(
+        """
+        (expected) => {
+          const selector = `button[data-ai-job-tool-current="true"][data-ai-job-tool-label="${expected}"]`;
+          return document.querySelectorAll(selector).length === 1;
+        }
+        """,
+        arg=label,
+        timeout=timeout,
+    )
+
+
+def wait_for_tool_card_status(page, label: str, status_text: str, timeout: float = 20000) -> None:
+    page.locator(
+        f"[data-tool-card-label='{label}'] .tool-card-status",
+    ).first.wait_for(state="visible", timeout=timeout)
+    page.wait_for_function(
+        """
+        ([label, expected]) => {
+          const card = document.querySelector(`[data-tool-card-label="${label}"] .tool-card-status`);
+          return card && card.textContent && card.textContent.includes(expected);
+        }
+        """,
+        arg=[label, status_text],
+        timeout=timeout,
+    )
+
+
+def get_body_text(page) -> str:
+    return page.evaluate("() => document.body ? document.body.innerText : ''")
+
+
+def upload_resume_with_retry(
+    page,
+    file_path: Path,
+    success_text: str,
+    *,
+    max_attempts: int = 3,
+    attempt_timeout_s: float = 8.0,
+) -> None:
+    file_input = page.locator("input[type='file']").first
+    last_body = ""
+
+    for attempt in range(max_attempts):
+        file_input.set_input_files(str(file_path))
+        deadline = time.time() + attempt_timeout_s
+
+        while time.time() < deadline:
+            last_body = get_body_text(page)
+            if success_text in last_body:
+                return
+            if "Session not found" in last_body or "上传失败" in last_body:
+                break
+            page.wait_for_timeout(250)
+
+        if attempt < max_attempts - 1:
+            page.wait_for_timeout(2000)
+
+    raise AssertionError(
+        "Resume upload did not succeed in browser smoke.\n\n"
+        f"Last page body:\n{last_body}"
+    )
+
+
 class BrowserSmokeTests(unittest.TestCase):
     def setUp(self) -> None:
         TEMP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -219,13 +285,15 @@ class BrowserSmokeTests(unittest.TestCase):
 
                 file_input = page.locator("input[type='file']").first
                 file_input.wait_for(state="attached", timeout=20000)
-                page.locator("[data-tool-card-label='SEEK 搜索岗位']").first.wait_for(
+                page.locator(f"[data-tool-card-label='{ACTION_SEARCH_SEEK}']").first.wait_for(
                     state="attached",
                     timeout=20000,
                 )
+                wait_for_current_tool_binding(page, ACTION_SEARCH_SEEK, timeout=20000)
                 wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
-                file_input.set_input_files(str(pdf_path))
-                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
+                wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)
+                upload_resume_with_retry(page, pdf_path, UPLOAD_SUCCESS)
+                wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)
 
                 send_chat_message(
                     page,
@@ -237,8 +305,7 @@ class BrowserSmokeTests(unittest.TestCase):
                 wait_for_body_text(page, "tailored_resume.pdf", timeout=20000)
 
                 click_latest_enabled_action(page, ACTION_REUPLOAD)
-                page.locator("input[type='file']").first.set_input_files(str(docx_path))
-                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
+                upload_resume_with_retry(page, docx_path, UPLOAD_SUCCESS)
 
                 send_chat_message(
                     page,
