@@ -175,6 +175,38 @@ def wait_for_tool_card_status(page, label: str, status_text: str, timeout: float
     )
 
 
+def wait_for_tool_card_meta(page, label: str, expected_text: str, timeout: float = 20000) -> None:
+    page.locator(
+        f"[data-tool-card-label='{label}'] .tool-card-meta",
+    ).first.wait_for(state="visible", timeout=timeout)
+    page.wait_for_function(
+        """
+        ([label, expected]) => {
+          const card = document.querySelector(`[data-tool-card-label="${label}"] .tool-card-meta`);
+          return card && card.textContent && card.textContent.includes(expected);
+        }
+        """,
+        arg=[label, expected_text],
+        timeout=timeout,
+    )
+
+
+def wait_for_tool_card_badge(page, label: str, expected_text: str, timeout: float = 20000) -> None:
+    page.locator(
+        f"[data-tool-card-label='{label}'] .tool-card-badge",
+    ).first.wait_for(state="visible", timeout=timeout)
+    page.wait_for_function(
+        """
+        ([label, expected]) => {
+          const badge = document.querySelector(`[data-tool-card-label="${label}"] .tool-card-badge`);
+          return badge && badge.textContent && badge.textContent.includes(expected);
+        }
+        """,
+        arg=[label, expected_text],
+        timeout=timeout,
+    )
+
+
 def get_body_text(page) -> str:
     return page.evaluate("() => document.body ? document.body.innerText : ''")
 
@@ -291,6 +323,11 @@ class BrowserSmokeTests(unittest.TestCase):
                 )
                 wait_for_current_tool_binding(page, ACTION_SEARCH_SEEK, timeout=20000)
                 wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
+                wait_for_tool_card_meta(page, ACTION_REUPLOAD, "打开上传框", timeout=20000)
+                wait_for_tool_card_meta(page, ACTION_SEARCH_SEEK, "英文简历", timeout=20000)
+                wait_for_tool_card_meta(page, "扫描职位", "已配置站点", timeout=20000)
+                wait_for_tool_card_badge(page, ACTION_REUPLOAD, "上传", timeout=20000)
+                wait_for_tool_card_badge(page, ACTION_SEARCH_SEEK, "搜索", timeout=20000)
                 wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)
                 upload_resume_with_retry(page, pdf_path, UPLOAD_SUCCESS)
                 wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)

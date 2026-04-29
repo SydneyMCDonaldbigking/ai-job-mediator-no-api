@@ -23,6 +23,7 @@
   const panelSections = [
     {
       title: "\u7b80\u5386",
+      description: "\u5148\u4e0a\u4f20\u6216\u66f4\u65b0\u5404\u8bed\u8a00\u7b80\u5386\u3002",
       items: [
         "\u91cd\u65b0\u4e0a\u4f20\u4e3b\u7b80\u5386",
         "\u4e0a\u4f20\u82f1\u6587\u7b80\u5386",
@@ -32,6 +33,7 @@
     },
     {
       title: "\u5c97\u4f4d\u641c\u7d22",
+      description: "\u5148\u641c\u7d22\u5355\u4e2a\u7ad9\u70b9\uff0c\u518d\u7528\u626b\u63cf\u505a\u6279\u91cf\u68c0\u67e5\u3002",
       items: [
         "\u626b\u63cf\u804c\u4f4d",
         "SEEK \u641c\u7d22\u5c97\u4f4d",
@@ -40,10 +42,12 @@
     },
     {
       title: "\u6c42\u804c\u64cd\u4f5c",
+      description: "\u56f4\u7ed5\u5f53\u524d\u4e3b\u7b80\u5386\u751f\u6210\u8bc4\u4f30\u4e0e ATS \u6750\u6599\u3002",
       items: ["A-F \u804c\u4f4d\u8bc4\u4f30", "\u4e0b\u8f7d ATS PDF"],
     },
     {
       title: "\u914d\u7f6e",
+      description: "\u7ba1\u7406\u7ad9\u70b9\u89c4\u5219\u548c\u81ea\u52a8\u626b\u63cf\u8bbe\u7f6e\u3002",
       items: [
         "\u67e5\u770b Portals",
         "\u66f4\u65b0 Portals",
@@ -53,9 +57,82 @@
     },
     {
       title: "\u7cfb\u7edf",
+      description: "\u6e05\u7406\u5f53\u524d\u4f1a\u8bdd\uff0c\u4fdd\u6301\u804a\u5929\u7ebf\u7d22\u5e72\u51c0\u3002",
       items: ["\u5220\u9664\u5f53\u524d\u5bf9\u8bdd"],
     },
   ];
+  const cardContent = {
+    "\u91cd\u65b0\u4e0a\u4f20\u4e3b\u7b80\u5386": {
+      badge: "\u4e0a\u4f20",
+      ready: "\u6253\u5f00\u4e0a\u4f20\u6846\uff0c\u8986\u76d6\u5f53\u524d\u4e3b\u7b80\u5386\u3002",
+      waiting: "\u7b49\u5f85\u4e3b\u7b80\u5386\u4e0a\u4f20\u5165\u53e3\u51fa\u73b0\u3002",
+    },
+    "\u4e0a\u4f20\u82f1\u6587\u7b80\u5386": {
+      badge: "\u4e0a\u4f20",
+      ready: "\u6253\u5f00\u4e0a\u4f20\u6846\uff0c\u8865\u5145\u82f1\u6587\u7b80\u5386\u4f9b SEEK \u4f7f\u7528\u3002",
+      waiting: "\u7b49\u5f85\u82f1\u6587\u7b80\u5386\u4e0a\u4f20\u5165\u53e3\u51fa\u73b0\u3002",
+    },
+    "\u4e0a\u4f20\u65e5\u6587\u7b80\u5386": {
+      badge: "\u4e0a\u4f20",
+      ready: "\u6253\u5f00\u4e0a\u4f20\u6846\uff0c\u8865\u5145\u65e5\u6587\u7b80\u5386\u4f9b doda \u4f7f\u7528\u3002",
+      waiting: "\u7b49\u5f85\u65e5\u6587\u7b80\u5386\u4e0a\u4f20\u5165\u53e3\u51fa\u73b0\u3002",
+    },
+    "\u4e0a\u4f20\u4e2d\u6587\u7b80\u5386": {
+      badge: "\u4e0a\u4f20",
+      ready: "\u6253\u5f00\u4e0a\u4f20\u6846\uff0c\u8865\u5145\u4e2d\u6587\u7b80\u5386\u4f9b\u540e\u7eed\u4e2d\u6587\u7ad9\u70b9\u4f7f\u7528\u3002",
+      waiting: "\u7b49\u5f85\u4e2d\u6587\u7b80\u5386\u4e0a\u4f20\u5165\u53e3\u51fa\u73b0\u3002",
+    },
+    "\u626b\u63cf\u804c\u4f4d": {
+      badge: "\u626b\u63cf",
+      ready: "\u6309\u5df2\u914d\u7f6e\u7ad9\u70b9\u6279\u91cf\u626b\u63cf\uff0c\u6c47\u603b\u65b0\u589e\u5c97\u4f4d\u3002",
+      waiting: "\u7b49\u5f85\u6279\u91cf\u626b\u63cf\u52a8\u4f5c\u5c31\u7eea\u3002",
+    },
+    "SEEK \u641c\u7d22\u5c97\u4f4d": {
+      badge: "\u641c\u7d22",
+      ready: "\u57fa\u4e8e\u82f1\u6587\u7b80\u5386\u641c\u7d22 SEEK \u5c97\u4f4d\u3002",
+      waiting: "\u7b49\u5f85\u82f1\u6587\u7b80\u5386\u548c SEEK \u641c\u7d22\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "doda \u641c\u7d22\u5c97\u4f4d": {
+      badge: "\u641c\u7d22",
+      ready: "\u57fa\u4e8e\u65e5\u6587\u7b80\u5386\u641c\u7d22 doda \u5c97\u4f4d\u3002",
+      waiting: "\u7b49\u5f85\u65e5\u6587\u7b80\u5386\u548c doda \u641c\u7d22\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "A-F \u804c\u4f4d\u8bc4\u4f30": {
+      badge: "\u8bc4\u4f30",
+      ready: "\u56f4\u7ed5\u5f53\u524d\u4e3b\u7b80\u5386\u751f\u6210 A-F \u5c97\u4f4d\u8bc4\u4f30\u3002",
+      waiting: "\u7b49\u5f85\u804c\u4f4d\u8bc4\u4f30\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "\u4e0b\u8f7d ATS PDF": {
+      badge: "\u5bfc\u51fa",
+      ready: "\u4e3a\u5f53\u524d JD \u4e0b\u8f7d ATS \u4f18\u5316 PDF\u3002",
+      waiting: "\u7b49\u5f85 ATS PDF \u751f\u6210\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "\u67e5\u770b Portals": {
+      badge: "\u914d\u7f6e",
+      ready: "\u67e5\u770b\u5f53\u524d\u6293\u53d6\u7ad9\u70b9\u548c\u641c\u7d22\u914d\u7f6e\u3002",
+      waiting: "\u7b49\u5f85 Portals \u914d\u7f6e\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "\u66f4\u65b0 Portals": {
+      badge: "\u914d\u7f6e",
+      ready: "\u66f4\u65b0\u7ad9\u70b9\u3001\u516c\u53f8\u548c\u641c\u7d22\u5173\u952e\u8bcd\u914d\u7f6e\u3002",
+      waiting: "\u7b49\u5f85 Portals \u66f4\u65b0\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "\u67e5\u770b\u81ea\u52a8\u626b\u63cf": {
+      badge: "\u914d\u7f6e",
+      ready: "\u67e5\u770b\u81ea\u52a8\u626b\u63cf\u65f6\u95f4\u3001\u7ad9\u70b9\u548c\u901a\u77e5\u8bbe\u7f6e\u3002",
+      waiting: "\u7b49\u5f85\u81ea\u52a8\u626b\u63cf\u8bbe\u7f6e\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "\u66f4\u65b0\u81ea\u52a8\u626b\u63cf": {
+      badge: "\u914d\u7f6e",
+      ready: "\u66f4\u65b0\u626b\u63cf\u65f6\u95f4\uff0c\u9608\u503c\u548c\u901a\u77e5\u8bbe\u7f6e\u3002",
+      waiting: "\u7b49\u5f85\u81ea\u52a8\u626b\u63cf\u66f4\u65b0\u5165\u53e3\u5c31\u7eea\u3002",
+    },
+    "\u5220\u9664\u5f53\u524d\u5bf9\u8bdd": {
+      badge: "\u7cfb\u7edf",
+      ready: "\u6e05\u7406\u5f53\u524d\u5bf9\u8bdd\uff0c\u91cd\u65b0\u5f00\u59cb\u4e00\u6761\u5e72\u51c0\u7684\u6c42\u804c\u7ebf\u7d22\u3002",
+      waiting: "\u7b49\u5f85\u5220\u9664\u5f53\u524d\u5bf9\u8bdd\u7684\u52a8\u4f5c\u51fa\u73b0\u3002",
+    },
+  };
   const isLocalHost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const rootPath =
     (document
@@ -126,6 +203,12 @@
         text-transform: uppercase;
         color: rgba(255, 255, 255, 0.56);
         margin: 0 0 8px;
+      }
+      #${panelId} .tool-panel-section-description {
+        font-size: 12px;
+        line-height: 1.45;
+        color: rgba(255, 255, 255, 0.62);
+        margin: 0 0 10px;
       }
       #${panelId} .tool-panel-grid {
         display: grid;
@@ -321,9 +404,14 @@
           if (!disabled) {
             actionableCount += 1;
           }
-          const tooltip = original
-            ? original.getAttribute("title") || original.getAttribute("aria-label") || ""
-            : "\u9875\u9762\u8fd8\u5728\u52a0\u8f7d\u8fd9\u4e2a\u52a8\u4f5c\uff0c\u7a0d\u7b49\u4e00\u4e0b\u5c31\u4f1a\u53d8\u4e3a\u53ef\u70b9\u3002";
+          const content = cardContent[label] || {
+            badge: section.title,
+            ready:
+              "\u70b9\u51fb\u540e\u4f1a\u89e6\u53d1\u5f53\u524d\u9875\u9762\u4e0a\u6700\u65b0\u7684\u5bf9\u5e94\u52a8\u4f5c\u3002",
+            waiting:
+              "\u9875\u9762\u8fd8\u5728\u52a0\u8f7d\u8fd9\u4e2a\u52a8\u4f5c\uff0c\u7a0d\u7b49\u4e00\u4e0b\u5c31\u4f1a\u53d8\u4e3a\u53ef\u70b9\u3002",
+          };
+          const tooltip = disabled ? content.waiting : content.ready;
           const statusLabel = disabled ? "\u7b49\u5f85\u4e2d" : "\u53ef\u7528";
           const statusKey = disabled ? "waiting" : "ready";
           return `
@@ -335,10 +423,10 @@
             >
               <span>
                 <span class="tool-card-label">${label}</span>
-                <span class="tool-card-meta">${tooltip || "\u70b9\u51fb\u540e\u4f1a\u89e6\u53d1\u5f53\u524d\u9875\u9762\u4e0a\u6700\u65b0\u7684\u5bf9\u5e94\u52a8\u4f5c\u3002"}</span>
+                <span class="tool-card-meta">${tooltip}</span>
                 <span class="tool-card-status" data-status="${statusKey}">${statusLabel}</span>
               </span>
-              <span class="tool-card-badge">${section.title}</span>
+              <span class="tool-card-badge">${content.badge}</span>
             </button>
           `;
         })
@@ -347,6 +435,7 @@
       return `
         <section class="tool-panel-section">
           <div class="tool-panel-section-title">${section.title}</div>
+          <div class="tool-panel-section-description">${section.description || ""}</div>
           <div class="tool-panel-grid">${cards}</div>
         </section>
       `;
