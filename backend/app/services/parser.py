@@ -8,9 +8,6 @@ from typing import Any
 
 from markitdown import MarkItDown
 
-from app.llm import complete_json
-from app.prompts import PARSE_RESUME_PROMPT
-from app.prompts.templates import RESUME_SCHEMA_EXAMPLE
 from app.schemas import ResumeData
 
 logger = logging.getLogger(__name__)
@@ -141,6 +138,12 @@ async def parse_document(content: bytes, filename: str) -> str:
         tmp_path.unlink(missing_ok=True)
 
 
+async def generate_parsed_resume(**kwargs) -> ResumeData:
+    from app.ai.tasks.parse_resume import generate_parsed_resume as task_impl
+
+    return await task_impl(**kwargs)
+
+
 async def parse_resume_to_json(markdown_text: str) -> dict[str, Any]:
     """Parse resume markdown to structured JSON using LLM.
 
@@ -154,15 +157,9 @@ async def parse_resume_to_json(markdown_text: str) -> dict[str, Any]:
     Returns:
         Structured resume data matching ResumeData schema
     """
-    prompt = PARSE_RESUME_PROMPT.format(
-        schema=RESUME_SCHEMA_EXAMPLE,
-        resume_text=markdown_text,
-    )
-
-    result = await complete_json(
-        prompt=prompt,
-        system_prompt="You are a JSON extraction engine. Output only valid JSON, no explanations.",
-    )
+    result = (
+        await generate_parsed_resume(resume_text=markdown_text)
+    ).model_dump()
 
     # Patch dates: restore months the LLM may have dropped
     result = restore_dates_from_markdown(result, markdown_text)
