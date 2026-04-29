@@ -1128,12 +1128,32 @@ class InMemoryTestBackend:
         job_key: str,
         status: str,
     ) -> DiscoveredJobRecord:
-        jobs = list(self.scheduled_scan_settings.high_score_unapplied_jobs) + list(
-            self.scheduled_scan_settings.recent_new_jobs
-        )
-        for job in jobs:
+        updated_job: DiscoveredJobRecord | None = None
+        recent_jobs: list[DiscoveredJobRecord] = []
+        for job in self.scheduled_scan_settings.recent_new_jobs:
+            candidate = job
             if job.job_key == job_key:
-                return job.model_copy(update={"status": status})
+                candidate = job.model_copy(update={"status": status})
+                updated_job = candidate
+            recent_jobs.append(candidate)
+        high_score_jobs: list[DiscoveredJobRecord] = []
+        for job in self.scheduled_scan_settings.high_score_unapplied_jobs:
+            if job.job_key == job_key and status == "applied":
+                updated_job = updated_job or job.model_copy(update={"status": status})
+                continue
+            candidate = job
+            if job.job_key == job_key:
+                candidate = job.model_copy(update={"status": status})
+                updated_job = candidate
+            high_score_jobs.append(candidate)
+        if updated_job:
+            self.scheduled_scan_settings = self.scheduled_scan_settings.model_copy(
+                update={
+                    "recent_new_jobs": recent_jobs,
+                    "high_score_unapplied_jobs": high_score_jobs,
+                }
+            )
+            return updated_job
         raise ValueError(f"Job not found: {job_key}")
 def ensure_runtime_assets() -> None:
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -1524,6 +1544,11 @@ def serialize_discovered_job_for_panel(job: DiscoveredJobRecord) -> dict[str, An
         "status": job.status,
         "score": round(job.match_score, 2),
         "job_url": job.job_url,
+        "job_key": job.job_key,
+        "can_mark_applied": job.status != "applied",
+        "apply_action_label": build_mark_applied_action_label(job)
+        if job.status != "applied"
+        else None,
     }
 
 
@@ -1834,11 +1859,15 @@ def build_discovered_job_actions(
             cl.Action(
                 name=ACTION_MARK_JOB_APPLIED,
                 payload={"job_key": job.job_key, "status": "applied"},
-                label=f"标记已投递: {job.company}",
+                label=build_mark_applied_action_label(job),
                 tooltip=f"把 {job.title} 标记为已投递",
             )
         )
     return actions
+
+
+def build_mark_applied_action_label(job: DiscoveredJobRecord) -> str:
+    return f"标记已投递: {job.company} / {job.title}"
 def build_scheduled_scan_form_actions(
     config: ScheduledScanConfig,
 ) -> list[cl.Action]:

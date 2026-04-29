@@ -254,6 +254,25 @@
         color: #ff7bb7;
         text-decoration: none;
       }
+      #${panelId} .tool-result-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      #${panelId} .tool-result-action {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        padding: 4px 10px;
+        background: rgba(255, 255, 255, 0.04);
+        color: #f6f3f4;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      #${panelId} .tool-result-action:hover {
+        border-color: rgba(255, 123, 183, 0.42);
+        color: #fff4f8;
+      }
       #${panelId} .tool-panel-section {
         margin-bottom: 14px;
       }
@@ -436,6 +455,21 @@
     return matches[0] || null;
   }
 
+  function getLatestActionButtonByExactLabel(label) {
+    const normalizedTarget = normalizeLabel(label);
+    const buttons = Array.from(document.querySelectorAll("button"));
+    const matches = buttons
+      .filter((button) => normalizeLabel(button.innerText) === normalizedTarget)
+      .filter((button) => button.offsetParent !== null || button.dataset.aiJobToolButton === "true");
+    matches.sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      if (rightRect.top !== leftRect.top) return rightRect.top - leftRect.top;
+      return 0;
+    });
+    return matches[0] || null;
+  }
+
   function hideInlineToolButtons() {
     const buttons = Array.from(document.querySelectorAll("button"));
     const managedByLabel = new Map();
@@ -546,12 +580,18 @@
           const linkMarkup = job.job_url
             ? `<a class="tool-result-link" href="${escapeHtml(job.job_url)}" target="_blank" rel="noreferrer">\u6253\u5f00\u5c97\u4f4d</a>`
             : "";
+          const applyMarkup = job.can_mark_applied && job.apply_action_label
+            ? `<button type="button" class="tool-result-action" data-job-apply-label="${escapeHtml(job.apply_action_label)}">\u6807\u8bb0\u5df2\u6295\u9012</button>`
+            : "";
+          const actionsMarkup = linkMarkup || applyMarkup
+            ? `<div class="tool-result-actions">${linkMarkup}${applyMarkup}</div>`
+            : "";
           return `
             <article class="tool-result-card">
               <div class="tool-result-title">${escapeHtml(job.title)}</div>
               <div class="tool-result-meta">${escapeHtml(companyBits)}</div>
               <div class="tool-result-secondary">${escapeHtml(secondaryBits)}</div>
-              ${linkMarkup}
+              ${actionsMarkup}
             </article>
           `;
         })
@@ -581,6 +621,16 @@
       <div class="tool-panel-results-subtitle">\u76f4\u63a5\u67e5\u770b\u6700\u8fd1\u65b0\u589e\u5c97\u4f4d\u548c\u9ad8\u5206\u672a\u6295\u9012\u5c97\u4f4d\u3002</div>
       ${groups.join("")}
     `;
+    host.querySelectorAll("[data-job-apply-label]").forEach((button) => {
+      if (button.dataset.aiJobApplyBound === "true") return;
+      button.dataset.aiJobApplyBound = "true";
+      button.addEventListener("click", () => {
+        const label = button.getAttribute("data-job-apply-label");
+        const actionButton = getLatestActionButtonByExactLabel(label);
+        if (!actionButton) return;
+        actionButton.click();
+      });
+    });
   }
 
   function renderPanel() {

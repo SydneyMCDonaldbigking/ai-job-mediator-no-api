@@ -263,6 +263,46 @@ def wait_for_scan_results_title(page, title: str, timeout: float = 20000) -> Non
     )
 
 
+def wait_for_scan_results_title_absent(page, title: str, timeout: float = 20000) -> None:
+    page.wait_for_function(
+        """
+        (expected) => {
+          const root = document.querySelector("[data-ai-job-scan-results='true']");
+          return !root || !root.innerText.includes(expected);
+        }
+        """,
+        arg=title,
+        timeout=timeout,
+    )
+
+
+def click_scan_result_action(page, action_label: str, timeout_s: float = 15.0) -> None:
+    deadline = time.time() + timeout_s
+    last_error = None
+    while time.time() < deadline:
+        try:
+            clicked = page.evaluate(
+                """
+                (label) => {
+                  const matches = Array.from(
+                    document.querySelectorAll(`[data-job-apply-label="${label}"]`)
+                  );
+                  const button = matches[matches.length - 1];
+                  if (!button) return false;
+                  button.click();
+                  return true;
+                }
+                """,
+                action_label,
+            )
+            if clicked:
+                return
+        except Exception as exc:
+            last_error = exc
+            page.wait_for_timeout(250)
+    raise AssertionError(f"Could not click scan result action: {action_label}\n{last_error}")
+
+
 def get_body_text(page) -> str:
     return page.evaluate("() => document.body ? document.body.innerText : ''")
 
@@ -402,6 +442,11 @@ class BrowserSmokeTests(unittest.TestCase):
                 click_latest_enabled_action(page, ACTION_VIEW_SCHEDULED_SCAN)
                 wait_for_scan_results_title(page, "Senior Backend Engineer", timeout=20000)
                 wait_for_scan_results_title(page, "Staff Platform Engineer", timeout=20000)
+                click_scan_result_action(
+                    page,
+                    "标记已投递: Example Co / Staff Platform Engineer",
+                )
+                wait_for_scan_results_title_absent(page, "Staff Platform Engineer", timeout=20000)
 
                 send_chat_message(
                     page,

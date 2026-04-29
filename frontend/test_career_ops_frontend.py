@@ -483,6 +483,36 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertEqual(actions[0].payload["job_key"], "seek:https://www.seek.com.au/job/123")
         self.assertEqual(actions[0].payload["status"], "applied")
 
+    def test_serialize_discovered_job_for_panel_includes_apply_action_label(self):
+        frontend_app = load_frontend_app_module()
+
+        job = frontend_app.DiscoveredJobRecord.model_validate(
+            {
+                "job_key": "seek:https://www.seek.com.au/job/123",
+                "source": "seek",
+                "resume_language": "en",
+                "title": "Senior Backend Engineer",
+                "company": "Example Co",
+                "location": "Sydney NSW",
+                "job_url": "https://www.seek.com.au/job/123",
+                "summary": "Build APIs",
+                "match_score": 0.91,
+                "discovered_at": "2026-04-17T00:05:00+00:00",
+                "first_seen_at": "2026-04-17T00:05:00+00:00",
+                "last_seen_at": "2026-04-17T00:05:00+00:00",
+                "is_new": True,
+                "status": "new",
+            }
+        )
+
+        payload = frontend_app.serialize_discovered_job_for_panel(job)
+
+        self.assertTrue(payload["can_mark_applied"])
+        self.assertEqual(
+            payload["apply_action_label"],
+            "标记已投递: Example Co / Senior Backend Engineer",
+        )
+
     def test_build_scheduled_scan_form_actions_includes_form_controls(self):
         frontend_app = load_frontend_app_module()
 
