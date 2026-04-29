@@ -133,3 +133,6 @@ frontend/.tmp-tests/
 frontend/app_old.txt
 frontend/app_broken_recovery.py
 frontend/_tmp_check_app.py
+.tmp-smoke/
+.tmp-smoke-tests/
+frontend/data/.chat_history_migrated
