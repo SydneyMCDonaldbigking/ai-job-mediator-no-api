@@ -62,7 +62,7 @@ def send_chat_message(page, text: str) -> None:
     textarea = page.locator("textarea").last
     textarea.fill(text)
 
-    for selector in ("form button[type='submit']", "button[type='submit']"):
+    for selector in ("#chat-submit", "form button[type='submit']", "button[type='submit']"):
         buttons = page.locator(selector)
         candidates = []
         for index in range(buttons.count()):
@@ -87,6 +87,53 @@ def send_chat_message(page, text: str) -> None:
             return
 
     textarea.press("Control+Enter")
+
+
+def wait_for_thread_user_message(
+    base_url: str,
+    thread_id: str,
+    expected_text: str,
+    timeout_s: float = 15.0,
+) -> dict:
+    deadline = time.time() + timeout_s
+    last_thread: dict = {}
+    while time.time() < deadline:
+        last_thread = get_backend_json(base_url, f"/api/v1/chat/threads/{thread_id}")
+        for step in last_thread.get("steps") or []:
+            if step.get("type") == "user_message" and expected_text in (step.get("output") or ""):
+                return last_thread
+        time.sleep(0.5)
+    raise AssertionError(
+        f"Expected user message {expected_text!r} in thread {thread_id}, got: {last_thread}"
+    )
+
+
+def send_chat_message_with_retry(
+    page,
+    base_url: str,
+    thread_id: str,
+    text: str,
+) -> None:
+    textarea = page.locator("textarea").last
+    attempts = ("click", "control_enter", "enter")
+    last_error: Exception | None = None
+
+    for mode in attempts:
+        textarea.fill(text)
+        try:
+            if mode == "click":
+                send_chat_message(page, text)
+            elif mode == "control_enter":
+                textarea.press("Control+Enter")
+            else:
+                textarea.press("Enter")
+            wait_for_thread_user_message(base_url, thread_id, text, timeout_s=8.0)
+            return
+        except Exception as exc:
+            last_error = exc
+            page.wait_for_timeout(1000)
+
+    raise AssertionError(f"Could not send chat message reliably: {last_error}")
 
 
 def click_latest_enabled_action(page, label: str) -> None:
@@ -151,6 +198,42 @@ def wait_for_body_text(page, text: str, timeout: float = 20000) -> None:
         "(expected) => document.body && document.body.innerText.includes(expected)",
         arg=text,
         timeout=timeout,
+    )
+
+
+def get_body_text(page) -> str:
+    return page.evaluate("() => document.body ? document.body.innerText : ''")
+
+
+def upload_resume_with_retry(
+    page,
+    file_path: Path,
+    success_text: str,
+    *,
+    max_attempts: int = 3,
+    attempt_timeout_s: float = 8.0,
+) -> None:
+    file_input = page.locator("input[type='file']").first
+    last_body = ""
+
+    for attempt in range(max_attempts):
+        file_input.set_input_files(str(file_path))
+        deadline = time.time() + attempt_timeout_s
+
+        while time.time() < deadline:
+            last_body = get_body_text(page)
+            if success_text in last_body:
+                return
+            if "Session not found" in last_body or "上传失败" in last_body:
+                break
+            page.wait_for_timeout(250)
+
+        if attempt < max_attempts - 1:
+            page.wait_for_timeout(2000)
+
+    raise AssertionError(
+        "Resume upload did not succeed in real-backend smoke.\n\n"
+        f"Last page body:\n{last_body}"
     )
 
 
@@ -230,6 +313,33 @@ def wait_for_scheduled_scan_time(
         time.sleep(0.5)
     raise AssertionError(
         f"Expected scheduled scan time {expected_time!r}, got: {last_payload}"
+    )
+
+
+def wait_for_thread_artifact(
+    base_url: str,
+    thread_id: str,
+    *,
+    expected_output: str | None = None,
+    expected_element_name: str | None = None,
+    timeout_s: float = 60.0,
+) -> dict:
+    deadline = time.time() + timeout_s
+    last_thread: dict = {}
+    while time.time() < deadline:
+        last_thread = get_backend_json(base_url, f"/api/v1/chat/threads/{thread_id}")
+        step_outputs = "\n".join((step.get("output") or "") for step in (last_thread.get("steps") or []))
+        element_names = [element.get("name") for element in (last_thread.get("elements") or [])]
+
+        output_ok = expected_output is None or expected_output in step_outputs
+        element_ok = expected_element_name is None or expected_element_name in element_names
+        if output_ok and element_ok:
+            return last_thread
+        time.sleep(0.5)
+
+    raise AssertionError(
+        f"Expected thread artifact output={expected_output!r} element={expected_element_name!r}, "
+        f"got thread payload: {last_thread}"
     )
 
 
@@ -338,16 +448,24 @@ class RealBackendSmokeTests(unittest.TestCase):
                     timeout=20000,
                 )
                 wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
-                file_input.set_input_files(str(resume_path))
-                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
+                upload_resume_with_retry(page, resume_path, UPLOAD_SUCCESS)
                 page.wait_for_timeout(2000)
 
-                send_chat_message(
+                thread_id = page.url.rstrip("/").rsplit("/", 1)[-1]
+                jd_text = "Responsibilities: build APIs\nRequirements: Python and FastAPI"
+                send_chat_message_with_retry(
                     page,
-                    "Responsibilities: build APIs\nRequirements: Python and FastAPI",
+                    backend_url,
+                    thread_id,
+                    jd_text,
                 )
-
-                wait_for_body_text(page, "tailored resume_id", timeout=60000)
+                wait_for_thread_artifact(
+                    backend_url,
+                    thread_id,
+                    expected_output="tailored resume_id",
+                    expected_element_name="tailored_resume.md",
+                    timeout_s=60.0,
+                )
                 click_latest_enabled_action(page, ACTION_DOWNLOAD_PDF)
                 wait_for_body_text(page, "tailored_resume.pdf", timeout=20000)
                 context.close()
@@ -471,8 +589,7 @@ class RealBackendSmokeTests(unittest.TestCase):
                     timeout=20000,
                 )
                 wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
-                file_input.set_input_files(str(resume_path))
-                wait_for_body_text(page, UPLOAD_SUCCESS, timeout=20000)
+                upload_resume_with_retry(page, resume_path, UPLOAD_SUCCESS)
                 page.wait_for_timeout(2000)
 
                 click_latest_enabled_action(page, ACTION_EVALUATE_JOB)

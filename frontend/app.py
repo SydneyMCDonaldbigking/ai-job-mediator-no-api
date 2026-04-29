@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 import mimetypes
 import os
@@ -54,6 +55,7 @@ SESSION_LAST_TAILORED_RESUME_ID = "tailored_resume_id"
 SESSION_LAST_JOB_DESCRIPTION = "last_job_description"
 SESSION_THREAD_NAMED = "thread_named"
 SESSION_PENDING_ACTION = "pending_action"
+SESSION_PENDING_RESUME_LANGUAGE = "pending_resume_language"
 SESSION_SCHEDULED_SCAN_EDIT_FIELD = "scheduled_scan_edit_field"
 SUPPORTED_MIME_TYPES = {
     "application/pdf": ".pdf",
@@ -105,6 +107,38 @@ SCAN_KEYWORDS = (
     "scan jobs",
     "scan portals",
     "扫职位",
+)
+SEEK_SEARCH_KEYWORDS = (
+    "seek 搜索岗位",
+    "search seek",
+    "seek jobs",
+)
+DODA_SEARCH_KEYWORDS = (
+    "doda 搜索岗位",
+    "search doda",
+    "doda jobs",
+)
+REUPLOAD_RESUME_KEYWORDS = (
+    "重新上传主简历",
+    "upload primary resume",
+    "reupload primary resume",
+)
+UPLOAD_EN_RESUME_KEYWORDS = (
+    "上传英文简历",
+    "upload english resume",
+)
+UPLOAD_JA_RESUME_KEYWORDS = (
+    "上传日文简历",
+    "upload japanese resume",
+)
+UPLOAD_ZH_RESUME_KEYWORDS = (
+    "上传中文简历",
+    "upload chinese resume",
+)
+DELETE_THREAD_KEYWORDS = (
+    "删除当前对话",
+    "delete current thread",
+    "delete current chat",
 )
 PORTALS_VIEW_KEYWORDS = (
     "portals",
@@ -1186,6 +1220,27 @@ def is_optimize_request(user_text: str) -> bool:
 def is_scan_request(user_text: str) -> bool:
     normalized = normalize_text(user_text)
     return any(keyword in normalized for keyword in SCAN_KEYWORDS)
+def is_seek_search_request(user_text: str) -> bool:
+    normalized = normalize_text(user_text)
+    return any(keyword in normalized for keyword in SEEK_SEARCH_KEYWORDS)
+def is_doda_search_request(user_text: str) -> bool:
+    normalized = normalize_text(user_text)
+    return any(keyword in normalized for keyword in DODA_SEARCH_KEYWORDS)
+def is_reupload_resume_request(user_text: str) -> bool:
+    normalized = normalize_text(user_text)
+    return any(keyword in normalized for keyword in REUPLOAD_RESUME_KEYWORDS)
+def is_upload_en_resume_request(user_text: str) -> bool:
+    normalized = normalize_text(user_text)
+    return any(keyword in normalized for keyword in UPLOAD_EN_RESUME_KEYWORDS)
+def is_upload_ja_resume_request(user_text: str) -> bool:
+    normalized = normalize_text(user_text)
+    return any(keyword in normalized for keyword in UPLOAD_JA_RESUME_KEYWORDS)
+def is_upload_zh_resume_request(user_text: str) -> bool:
+    normalized = normalize_text(user_text)
+    return any(keyword in normalized for keyword in UPLOAD_ZH_RESUME_KEYWORDS)
+def is_delete_current_thread_request(user_text: str) -> bool:
+    normalized = normalize_text(user_text)
+    return any(keyword in normalized for keyword in DELETE_THREAD_KEYWORDS)
 def is_portals_view_request(user_text: str) -> bool:
     normalized = normalize_text(user_text)
     return any(keyword in normalized for keyword in PORTALS_VIEW_KEYWORDS)
@@ -1553,7 +1608,7 @@ def format_portals_summary(config: PortalsConfig) -> str:
         f"- 搜索查询：`{len(config.search_queries)}`\n"
         f"- 正向标题词：`{len(config.title_filter.positive)}`"
     )
-def build_tool_actions() -> list[cl.Action]:
+def _deprecated_build_tool_actions() -> list[cl.Action]:
     return [
         cl.Action(
             name=ACTION_REUPLOAD_MASTER_RESUME,
@@ -1834,6 +1889,7 @@ async def process_resume_upload(file_obj: Any, resume_language: str = "en") -> N
         mime_type,
         resume_language=resume_language,
     )
+    cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, None)
     if resume_language == "en":
         cl.user_session.set(SESSION_RESUME_ID, upload_result.resume_id)
         cl.user_session.set(SESSION_RESUME_STATUS, upload_result.processing_status)
@@ -1843,11 +1899,15 @@ async def process_resume_upload(file_obj: Any, resume_language: str = "en") -> N
         )
     cl.user_session.set(SESSION_LAST_UPLOAD_NAME, file_name)
     if resume_language == "en":
-        await cl.Message(content=UPLOAD_SUCCESS_MESSAGE).send()
+        success_message = UPLOAD_SUCCESS_MESSAGE
     else:
-        await cl.Message(
-            content=f"{get_resume_language_label(resume_language)}简历上传成功，后续会用于对应站点的搜索与投递。",
-        ).send()
+        success_message = (
+            f"{get_resume_language_label(resume_language)}简历上传成功，后续会用于对应站点的搜索与投递。"
+        )
+    await cl.Message(content=success_message).send()
+    # AskFile completion and action rendering can race in Chainlit; a tiny yield
+    # makes the follow-up tool buttons reliably interactive again.
+    await asyncio.sleep(0.2)
     await send_tool_actions()
 async def get_resume_id_from_session() -> str | None:
     resume_id = cl.user_session.get(SESSION_RESUME_ID)
@@ -1882,6 +1942,7 @@ async def ask_for_resume_upload(
     prompt: str | None = None,
     resume_language: str = "en",
 ) -> None:
+    cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, resume_language)
     files = await cl.AskFileMessage(
         content=prompt or "请上传你的主简历（PDF、DOC 或 DOCX）。",
         accept=FILE_ACCEPT_CONFIG,
@@ -1893,9 +1954,27 @@ async def ask_for_resume_upload(
     if files:
         await process_resume_upload(files[0], resume_language=resume_language)
     else:
+        cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, None)
         await cl.Message(
             content="还没有收到简历文件。你随时上传后，我就可以继续帮你处理。",
         ).send()
+
+
+async def prompt_resume_upload_via_chat(
+    prompt: str,
+    *,
+    resume_language: str = "en",
+) -> None:
+    cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, resume_language)
+    await cl.Message(
+        content=(
+            f"{prompt}\n\n"
+            "直接把文件拖到聊天窗口，或者点击上传按钮选文件。"
+            "\n上传后再发送一条消息，我就会开始处理；内容随便写一句也可以。"
+            "\nAttach the file, then send any message so I can start processing it."
+        ),
+        actions=build_tool_actions(),
+    ).send()
 async def handle_career_ops_evaluation(user_text: str, resume_id: str) -> None:
     if not looks_like_job_description(user_text):
         cl.user_session.set(SESSION_PENDING_ACTION, PENDING_EVALUATE_JOB)
@@ -2178,6 +2257,7 @@ async def on_chat_start() -> None:
     cl.user_session.set(SESSION_LAST_JOB_DESCRIPTION, None)
     cl.user_session.set(SESSION_THREAD_NAMED, False)
     cl.user_session.set(SESSION_PENDING_ACTION, None)
+    cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, None)
     await cl.Message(content=WELCOME_MESSAGE).send()
     await send_tool_actions()
     await ask_for_resume_upload()
@@ -2304,6 +2384,7 @@ async def on_delete_current_thread_action(_: Any) -> None:
     cl.user_session.set(SESSION_LAST_TAILORED_RESUME_ID, None)
     cl.user_session.set(SESSION_THREAD_NAMED, False)
     cl.user_session.set(SESSION_PENDING_ACTION, None)
+    cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_EDIT_FIELD, None)
     cl.user_session.set(SESSION_SCHEDULED_SCAN_SETTINGS_FORM_ACTIVE, False)
     await cl.Message(
@@ -2323,7 +2404,8 @@ async def on_settings_update(settings: dict[str, Any]) -> None:
 async def on_message(message: cl.Message) -> None:
     uploaded_files = extract_supported_files(getattr(message, "elements", None))
     if uploaded_files:
-        await process_resume_upload(uploaded_files[0])
+        resume_language = cl.user_session.get(SESSION_PENDING_RESUME_LANGUAGE) or "en"
+        await process_resume_upload(uploaded_files[0], resume_language=resume_language)
         return
 
     resume_id = await get_resume_id_from_session()
@@ -2361,8 +2443,29 @@ async def on_message(message: cl.Message) -> None:
                 return
             await handle_generate_tailored_pdf(user_text, resume_id)
             return
+        if is_reupload_resume_request(user_text):
+            await on_reupload_master_resume_action(None)
+            return
+        if is_upload_en_resume_request(user_text):
+            await on_upload_en_resume_action(None)
+            return
+        if is_upload_ja_resume_request(user_text):
+            await on_upload_ja_resume_action(None)
+            return
+        if is_upload_zh_resume_request(user_text):
+            await on_upload_zh_resume_action(None)
+            return
+        if is_delete_current_thread_request(user_text):
+            await on_delete_current_thread_action(None)
+            return
         if is_scan_request(user_text):
             await handle_scan_request()
+            return
+        if is_seek_search_request(user_text):
+            await handle_seek_search_request()
+            return
+        if is_doda_search_request(user_text):
+            await handle_doda_search_request()
             return
         if is_portals_edit_request(user_text):
             await handle_start_portals_update()

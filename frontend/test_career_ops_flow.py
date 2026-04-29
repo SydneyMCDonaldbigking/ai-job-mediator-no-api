@@ -200,6 +200,120 @@ class FakeMessage:
 
 
 class CareerOpsFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_language_resume_upload_uses_ask_file_prompt(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_data_layer = FakeDataLayer()
+        fake_backend = FakeBackend(frontend_app)
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-lang-prompt",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+        japanese_resume = SimpleNamespace(
+            path="C:/tmp/resume-ja.pdf",
+            name="resume-ja.pdf",
+            mime="application/pdf",
+        )
+
+        FakeAskFileMessage.responses = [[japanese_resume]]
+        FakeAskFileMessage.prompts = []
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app.cl, "AskFileMessage", FakeAskFileMessage),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "context", fake_context),
+        ):
+            await frontend_app.on_upload_ja_resume_action(None)
+
+        self.assertEqual(
+            FakeAskFileMessage.prompts,
+            ["Please upload a Japanese resume. It will be linked to Japanese job sites."],
+        )
+        self.assertEqual(
+            fake_backend.upload_calls[-1]["resume_language"],
+            "ja",
+        )
+        self.assertEqual(
+            fake_user_session.get(frontend_app.SESSION_PENDING_RESUME_LANGUAGE),
+            None,
+        )
+
+    async def test_language_resume_upload_uses_pending_language_state(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_data_layer = FakeDataLayer()
+        fake_backend = FakeBackend(frontend_app)
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-lang",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+        japanese_resume = SimpleNamespace(
+            path="C:/tmp/resume-ja.pdf",
+            name="resume-ja.pdf",
+            mime="application/pdf",
+        )
+
+        FakeAskFileMessage.responses = [[japanese_resume]]
+        FakeAskFileMessage.prompts = []
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app.cl, "AskFileMessage", FakeAskFileMessage),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "context", fake_context),
+        ):
+            await frontend_app.on_upload_ja_resume_action(None)
+
+        self.assertEqual(
+            fake_backend.upload_calls[-1]["resume_language"],
+            "ja",
+        )
+        self.assertIsNone(
+            fake_user_session.get(frontend_app.SESSION_PENDING_RESUME_LANGUAGE)
+        )
+        self.assertEqual(
+            FakeAskFileMessage.prompts,
+            ["Please upload a Japanese resume. It will be linked to Japanese job sites."],
+        )
+
+    async def test_text_command_can_trigger_doda_search(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_user_session.set(frontend_app.SESSION_RESUME_ID, "master-123")
+        fake_user_session.set(frontend_app.SESSION_THREAD_NAMED, True)
+        fake_data_layer = FakeDataLayer()
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-doda-command",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "context", fake_context),
+            patch.object(frontend_app, "handle_doda_search_request") as handle_doda_search,
+        ):
+            await frontend_app.on_message(
+                SimpleNamespace(content="doda 搜索岗位", elements=None)
+            )
+
+        handle_doda_search.assert_awaited_once()
+
     async def test_delete_then_pdf_request_recreates_thread_with_user_binding(self):
         frontend_app = load_frontend_app_module()
         fake_user_session = FakeUserSession()
@@ -339,7 +453,10 @@ class CareerOpsFlowTests(unittest.IsolatedAsyncioTestCase):
             all(call.get("user_id") == "user-1" for call in fake_data_layer.thread_updates)
         )
         self.assertEqual(len(FakeAskFileMessage.prompts), 2)
-        self.assertNotEqual(FakeAskFileMessage.prompts[0], FakeAskFileMessage.prompts[1])
+        self.assertEqual(
+            fake_user_session.get(frontend_app.SESSION_PENDING_RESUME_LANGUAGE),
+            None,
+        )
         pdf_messages = [
             message
             for message in FakeMessage.created
