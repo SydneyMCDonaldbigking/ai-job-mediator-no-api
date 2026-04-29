@@ -1,5 +1,7 @@
 from __future__ import annotations
 import asyncio
+import base64
+import html
 import json
 import mimetypes
 import os
@@ -711,6 +713,42 @@ class InMemoryTestBackend:
             resume_ja_id="test-ja-resume",
             updated_at="2026-04-17T00:00:00+00:00",
         )
+        sample_recent_jobs = [
+            {
+                "job_key": "seek:https://www.seek.com.au/job/123",
+                "source": "seek",
+                "resume_language": "en",
+                "title": "Senior Backend Engineer",
+                "company": "Example Co",
+                "location": "Sydney NSW",
+                "job_url": "https://www.seek.com.au/job/123",
+                "summary": "Build APIs",
+                "match_score": 0.91,
+                "discovered_at": "2026-04-17T00:05:00+00:00",
+                "first_seen_at": "2026-04-17T00:05:00+00:00",
+                "last_seen_at": "2026-04-17T00:05:00+00:00",
+                "is_new": True,
+                "status": "new",
+            }
+        ]
+        sample_high_score_jobs = sample_recent_jobs + [
+            {
+                "job_key": "seek:https://www.seek.com.au/job/456",
+                "source": "seek",
+                "resume_language": "en",
+                "title": "Staff Platform Engineer",
+                "company": "Example Co",
+                "location": "Melbourne VIC",
+                "job_url": "https://www.seek.com.au/job/456",
+                "summary": "Build platforms",
+                "match_score": 0.96,
+                "discovered_at": "2026-04-17T00:10:00+00:00",
+                "first_seen_at": "2026-04-17T00:10:00+00:00",
+                "last_seen_at": "2026-04-17T00:10:00+00:00",
+                "is_new": True,
+                "status": "new",
+            }
+        ]
         self.scheduled_scan_settings = ScheduledScanSettingsResponse.model_validate(
             {
                 "config": {
@@ -727,11 +765,11 @@ class InMemoryTestBackend:
                     "last_run_date_local": None,
                     "last_run_status": None,
                     "last_error": None,
-                    "last_result_counts": {},
+                    "last_result_counts": {"seek": {"raw_jobs_found": 7, "new_jobs": 2}},
                 },
                 "assets": self.multilingual_assets.model_dump(),
-                "recent_new_jobs": [],
-                "high_score_unapplied_jobs": [],
+                "recent_new_jobs": sample_recent_jobs,
+                "high_score_unapplied_jobs": sample_high_score_jobs,
             }
         )
         self.portals_config = PortalsConfig.model_validate(
@@ -1460,7 +1498,35 @@ def format_scheduled_scan_settings(result: ScheduledScanSettingsResponse) -> str
             lines.append(
                 f"- {job.title} | {job.company}{location} | {job.source.upper()} | score `{score}` | status `{job.status}`"
             )
-    return "\n".join(lines)
+    return "\n".join(lines) + f"\n\n{build_scheduled_scan_results_payload(result)}"
+def build_scheduled_scan_results_payload(result: ScheduledScanSettingsResponse) -> str:
+    payload = {
+        "recent_new_jobs": [
+            serialize_discovered_job_for_panel(job) for job in result.recent_new_jobs[:5]
+        ],
+        "high_score_unapplied_jobs": [
+            serialize_discovered_job_for_panel(job)
+            for job in result.high_score_unapplied_jobs[:5]
+        ],
+    }
+    encoded = base64.b64encode(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    ).decode("ascii")
+    return f"SCAN_RESULTS_PAYLOAD::{html.escape(encoded, quote=True)}"
+
+
+def serialize_discovered_job_for_panel(job: DiscoveredJobRecord) -> dict[str, Any]:
+    return {
+        "title": job.title,
+        "company": job.company,
+        "location": job.location,
+        "source": job.source.upper(),
+        "status": job.status,
+        "score": round(job.match_score, 2),
+        "job_url": job.job_url,
+    }
+
+
 def format_career_ops_evaluation(result: CareerOpsEvaluateResponse) -> str:
     data = result.data
     lines = [

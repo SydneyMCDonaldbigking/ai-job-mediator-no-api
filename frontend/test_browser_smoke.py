@@ -18,6 +18,7 @@ UPLOAD_SUCCESS = "简历上传成功"
 ACTION_DOWNLOAD_PDF = "下载 ATS PDF"
 ACTION_REUPLOAD = "重新上传主简历"
 ACTION_SEARCH_SEEK = "SEEK 搜索岗位"
+ACTION_VIEW_SCHEDULED_SCAN = "查看自动扫描"
 LOGIN_USERNAME = "local-user"
 LOGIN_PASSWORD = "job-mediator-123"
 
@@ -249,6 +250,19 @@ def wait_for_tool_card_priority(
     )
 
 
+def wait_for_scan_results_title(page, title: str, timeout: float = 20000) -> None:
+    page.wait_for_function(
+        """
+        (expected) => {
+          const root = document.querySelector("[data-ai-job-scan-results='true']");
+          return root && root.innerText.includes(expected);
+        }
+        """,
+        arg=title,
+        timeout=timeout,
+    )
+
+
 def get_body_text(page) -> str:
     return page.evaluate("() => document.body ? document.body.innerText : ''")
 
@@ -384,6 +398,10 @@ class BrowserSmokeTests(unittest.TestCase):
                 wait_for_tool_card_priority(page, "扫描职位", "workspace", timeout=20000)
                 upload_resume_with_retry(page, pdf_path, UPLOAD_SUCCESS)
                 wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)
+
+                click_latest_enabled_action(page, ACTION_VIEW_SCHEDULED_SCAN)
+                wait_for_scan_results_title(page, "Senior Backend Engineer", timeout=20000)
+                wait_for_scan_results_title(page, "Staff Platform Engineer", timeout=20000)
 
                 send_chat_message(
                     page,

@@ -196,6 +196,64 @@
         color: rgba(255, 255, 255, 0.68);
         margin: 0 0 14px;
       }
+      #${panelId} .tool-panel-results {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      #${panelId} .tool-panel-results[hidden] {
+        display: none !important;
+      }
+      #${panelId} .tool-panel-results-title {
+        font-size: 13px;
+        font-weight: 700;
+        margin: 0 0 6px;
+      }
+      #${panelId} .tool-panel-results-subtitle {
+        font-size: 11px;
+        line-height: 1.4;
+        color: rgba(255, 255, 255, 0.62);
+        margin: 0 0 10px;
+      }
+      #${panelId} .tool-panel-results-group {
+        margin-top: 12px;
+      }
+      #${panelId} .tool-panel-results-group-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.78);
+        margin: 0 0 8px;
+      }
+      #${panelId} .tool-panel-results-list {
+        display: grid;
+        gap: 8px;
+      }
+      #${panelId} .tool-result-card {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.04);
+      }
+      #${panelId} .tool-result-title {
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.35;
+        margin: 0 0 4px;
+      }
+      #${panelId} .tool-result-meta,
+      #${panelId} .tool-result-secondary {
+        font-size: 11px;
+        line-height: 1.45;
+        color: rgba(255, 255, 255, 0.68);
+      }
+      #${panelId} .tool-result-link {
+        display: inline-flex;
+        margin-top: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #ff7bb7;
+        text-decoration: none;
+      }
       #${panelId} .tool-panel-section {
         margin-bottom: 14px;
       }
@@ -350,6 +408,7 @@
       <h2 class="tool-panel-title">\u5e38\u7528\u529f\u80fd</h2>
       <p class="tool-panel-subtitle">\u53f3\u4fa7\u56fa\u5b9a\u5165\u53e3\u3002\u4e00\u4e2a\u529f\u80fd\u4e00\u4e2a\u6846\uff0c\u51cf\u5c11\u804a\u5929\u6d41\u91cc\u91cd\u590d\u6309\u94ae\u5361\u4f4f\u7684\u95ee\u9898\u3002</p>
       <div class="tool-panel-sections"></div>
+      <div class="tool-panel-results" data-ai-job-scan-results="true" hidden></div>
     `;
     document.body.appendChild(panel);
     return panel;
@@ -422,6 +481,106 @@
         }
       });
     });
+  }
+
+  function escapeHtml(text) {
+    return String(text || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function decodeScanPayload(encoded) {
+    if (!encoded) return null;
+    try {
+      const binary = window.atob(encoded);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      const jsonText = new TextDecoder().decode(bytes);
+      return JSON.parse(jsonText);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function getLatestScanPayload() {
+    const text = document.body ? document.body.textContent || "" : "";
+    const matches = Array.from(text.matchAll(/SCAN_RESULTS_PAYLOAD::([A-Za-z0-9+/=]+)/g));
+    const latest = matches[matches.length - 1];
+    if (!latest) return null;
+    return decodeScanPayload(latest[1]);
+  }
+
+  function hideScanPayloadMarkers() {
+    const panel = document.getElementById(panelId);
+    Array.from(document.querySelectorAll("p, div, span, code")).forEach((node) => {
+      if (panel && panel.contains(node)) return;
+      const text = (node.textContent || "").trim();
+      if (text.startsWith("SCAN_RESULTS_PAYLOAD::")) {
+        node.style.display = "none";
+      }
+    });
+  }
+
+  function renderScanResults(panel) {
+    const host = panel.querySelector(".tool-panel-results");
+    if (!host) return;
+    const payload = getLatestScanPayload();
+    const recentJobs = payload?.recent_new_jobs || [];
+    const highScoreJobs = payload?.high_score_unapplied_jobs || [];
+
+    if (!recentJobs.length && !highScoreJobs.length) {
+      host.hidden = true;
+      host.innerHTML = "";
+      return;
+    }
+
+    const renderJobs = (jobs) =>
+      jobs
+        .map((job) => {
+          const companyBits = [job.company, job.location].filter(Boolean).join(" | ");
+          const secondaryBits = [job.source, `score ${job.score?.toFixed ? job.score.toFixed(2) : job.score}`, job.status]
+            .filter(Boolean)
+            .join(" | ");
+          const linkMarkup = job.job_url
+            ? `<a class="tool-result-link" href="${escapeHtml(job.job_url)}" target="_blank" rel="noreferrer">\u6253\u5f00\u5c97\u4f4d</a>`
+            : "";
+          return `
+            <article class="tool-result-card">
+              <div class="tool-result-title">${escapeHtml(job.title)}</div>
+              <div class="tool-result-meta">${escapeHtml(companyBits)}</div>
+              <div class="tool-result-secondary">${escapeHtml(secondaryBits)}</div>
+              ${linkMarkup}
+            </article>
+          `;
+        })
+        .join("");
+
+    const groups = [];
+    if (recentJobs.length) {
+      groups.push(`
+        <section class="tool-panel-results-group">
+          <div class="tool-panel-results-group-title">\u6700\u8fd1\u65b0\u589e\u5c97\u4f4d</div>
+          <div class="tool-panel-results-list">${renderJobs(recentJobs)}</div>
+        </section>
+      `);
+    }
+    if (highScoreJobs.length) {
+      groups.push(`
+        <section class="tool-panel-results-group">
+          <div class="tool-panel-results-group-title">\u9ad8\u5206\u672a\u6295\u9012\u5c97\u4f4d</div>
+          <div class="tool-panel-results-list">${renderJobs(highScoreJobs)}</div>
+        </section>
+      `);
+    }
+
+    host.hidden = false;
+    host.innerHTML = `
+      <div class="tool-panel-results-title">\u5c97\u4f4d\u7ed3\u679c</div>
+      <div class="tool-panel-results-subtitle">\u76f4\u63a5\u67e5\u770b\u6700\u8fd1\u65b0\u589e\u5c97\u4f4d\u548c\u9ad8\u5206\u672a\u6295\u9012\u5c97\u4f4d\u3002</div>
+      ${groups.join("")}
+    `;
   }
 
   function renderPanel() {
@@ -498,6 +657,7 @@
     }
     panel.dataset.empty = sectionsMarkup ? "false" : "true";
     panel.dataset.ready = actionableCount > 0 ? "true" : "false";
+    renderScanResults(panel);
 
     sectionsHost.querySelectorAll("[data-tool-card-label]").forEach((button) => {
       if (button.dataset.aiJobToolBound === "true") return;
@@ -517,6 +677,7 @@
     window.requestAnimationFrame(() => {
       refreshScheduled = false;
       hideInlineToolButtons();
+      hideScanPayloadMarkers();
       renderPanel();
     });
   }

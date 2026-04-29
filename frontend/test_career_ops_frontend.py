@@ -423,6 +423,22 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
                             "last_seen_at": "2026-04-17T00:05:00+00:00",
                             "is_new": True,
                             "status": "new",
+                        },
+                        {
+                            "job_key": "seek:https://www.seek.com.au/job/456",
+                            "source": "seek",
+                            "resume_language": "en",
+                            "title": "Staff Platform Engineer",
+                            "company": "Example Co",
+                            "location": "Melbourne VIC",
+                            "job_url": "https://www.seek.com.au/job/456",
+                            "summary": "Build platforms",
+                            "match_score": 0.96,
+                            "discovered_at": "2026-04-17T00:05:00+00:00",
+                            "first_seen_at": "2026-04-17T00:05:00+00:00",
+                            "last_seen_at": "2026-04-17T00:05:00+00:00",
+                            "is_new": True,
+                            "status": "new",
                         }
                     ],
                 }
@@ -435,6 +451,8 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertIn("飞书", message)
         self.assertIn("高分未投递岗位", message)
         self.assertIn("Senior Backend Engineer", message)
+        self.assertIn("Staff Platform Engineer", message)
+        self.assertIn("SCAN_RESULTS_PAYLOAD::", message)
 
     def test_build_discovered_job_actions_creates_apply_buttons(self):
         frontend_app = load_frontend_app_module()
