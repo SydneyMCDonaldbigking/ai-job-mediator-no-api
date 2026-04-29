@@ -84,16 +84,19 @@
     },
     "\u626b\u63cf\u804c\u4f4d": {
       badge: "\u626b\u63cf",
+      tags: ["\u6279\u91cf", "\u5df2\u914d\u7f6e"],
       ready: "\u6309\u5df2\u914d\u7f6e\u7ad9\u70b9\u6279\u91cf\u626b\u63cf\uff0c\u6c47\u603b\u65b0\u589e\u5c97\u4f4d\u3002",
       waiting: "\u7b49\u5f85\u6279\u91cf\u626b\u63cf\u52a8\u4f5c\u5c31\u7eea\u3002",
     },
     "SEEK \u641c\u7d22\u5c97\u4f4d": {
       badge: "\u641c\u7d22",
+      tags: ["\u82f1\u6587", "\u5355\u7ad9"],
       ready: "\u57fa\u4e8e\u82f1\u6587\u7b80\u5386\u641c\u7d22 SEEK \u5c97\u4f4d\u3002",
       waiting: "\u7b49\u5f85\u82f1\u6587\u7b80\u5386\u548c SEEK \u641c\u7d22\u5165\u53e3\u5c31\u7eea\u3002",
     },
     "doda \u641c\u7d22\u5c97\u4f4d": {
       badge: "\u641c\u7d22",
+      tags: ["\u65e5\u6587", "\u5355\u7ad9"],
       ready: "\u57fa\u4e8e\u65e5\u6587\u7b80\u5386\u641c\u7d22 doda \u5c97\u4f4d\u3002",
       waiting: "\u7b49\u5f85\u65e5\u6587\u7b80\u5386\u548c doda \u641c\u7d22\u5165\u53e3\u5c31\u7eea\u3002",
     },
@@ -239,6 +242,14 @@
       #${panelId} .tool-card[data-tool-card-priority="primary"] .tool-card-meta {
         color: rgba(255, 232, 240, 0.84);
       }
+      #${panelId} .tool-card[data-tool-card-priority="workspace"] {
+        border-color: rgba(126, 231, 135, 0.28);
+        background: linear-gradient(180deg, rgba(126, 231, 135, 0.16), rgba(255, 255, 255, 0.04));
+        box-shadow: inset 0 0 0 1px rgba(126, 231, 135, 0.12);
+      }
+      #${panelId} .tool-card[data-tool-card-priority="workspace"] .tool-card-label {
+        color: #eefef0;
+      }
       #${panelId} .tool-card:hover:not(:disabled) {
         transform: translateY(-1px);
         border-color: rgba(255, 73, 146, 0.48);
@@ -259,6 +270,22 @@
         line-height: 1.35;
         color: rgba(255, 255, 255, 0.62);
         margin-top: 4px;
+      }
+      #${panelId} .tool-card-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      #${panelId} .tool-card-tag {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.76);
+        background: rgba(255, 255, 255, 0.08);
       }
       #${panelId} .tool-card-status {
         display: inline-flex;
@@ -417,12 +444,21 @@
           }
           const content = cardContent[label] || {
             badge: section.title,
+            tags: [],
             ready:
               "\u70b9\u51fb\u540e\u4f1a\u89e6\u53d1\u5f53\u524d\u9875\u9762\u4e0a\u6700\u65b0\u7684\u5bf9\u5e94\u52a8\u4f5c\u3002",
             waiting:
               "\u9875\u9762\u8fd8\u5728\u52a0\u8f7d\u8fd9\u4e2a\u52a8\u4f5c\uff0c\u7a0d\u7b49\u4e00\u4e0b\u5c31\u4f1a\u53d8\u4e3a\u53ef\u70b9\u3002",
           };
-          const priority = section.title === "\u7b80\u5386" ? "primary" : "standard";
+          const priority =
+            label === "\u626b\u63cf\u804c\u4f4d"
+              ? "workspace"
+              : section.title === "\u7b80\u5386"
+                ? "primary"
+                : "standard";
+          const tagsMarkup = (content.tags || [])
+            .map((tag) => `<span class="tool-card-tag">${tag}</span>`)
+            .join("");
           const tooltip = disabled ? content.waiting : content.ready;
           const statusLabel = disabled ? "\u7b49\u5f85\u4e2d" : "\u53ef\u7528";
           const statusKey = disabled ? "waiting" : "ready";
@@ -437,6 +473,7 @@
               <span>
                 <span class="tool-card-label">${label}</span>
                 <span class="tool-card-meta">${tooltip}</span>
+                ${tagsMarkup ? `<span class="tool-card-tags">${tagsMarkup}</span>` : ""}
                 <span class="tool-card-status" data-status="${statusKey}">${statusLabel}</span>
               </span>
               <span class="tool-card-badge">${content.badge}</span>

@@ -207,6 +207,24 @@ def wait_for_tool_card_badge(page, label: str, expected_text: str, timeout: floa
     )
 
 
+def wait_for_tool_card_tag(page, label: str, expected_text: str, timeout: float = 20000) -> None:
+    page.locator(
+        f"[data-tool-card-label='{label}'] .tool-card-tag",
+    ).first.wait_for(state="visible", timeout=timeout)
+    page.wait_for_function(
+        """
+        ([label, expected]) => {
+          const tags = Array.from(
+            document.querySelectorAll(`[data-tool-card-label="${label}"] .tool-card-tag`)
+          );
+          return tags.some((tag) => (tag.textContent || "").includes(expected));
+        }
+        """,
+        arg=[label, expected_text],
+        timeout=timeout,
+    )
+
+
 def wait_for_tool_card_priority(
     page,
     label: str,
@@ -356,6 +374,11 @@ class BrowserSmokeTests(unittest.TestCase):
                 wait_for_tool_card_priority(page, ACTION_REUPLOAD, "primary", timeout=20000)
                 wait_for_tool_card_priority(page, "ä¸Šä¼ è‹±æ–‡ç®€åŽ†", "primary", timeout=20000)
                 wait_for_tool_card_priority(page, ACTION_SEARCH_SEEK, "standard", timeout=20000)
+                wait_for_tool_card_tag(page, ACTION_SEARCH_SEEK, "英文", timeout=20000)
+                wait_for_tool_card_tag(page, ACTION_SEARCH_SEEK, "单站", timeout=20000)
+                wait_for_tool_card_tag(page, "扫描职位", "批量", timeout=20000)
+                wait_for_tool_card_tag(page, "扫描职位", "已配置", timeout=20000)
+                wait_for_tool_card_priority(page, "扫描职位", "workspace", timeout=20000)
                 upload_resume_with_retry(page, pdf_path, UPLOAD_SUCCESS)
                 wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)
 
