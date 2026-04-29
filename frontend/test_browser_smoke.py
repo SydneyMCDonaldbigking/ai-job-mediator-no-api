@@ -207,6 +207,30 @@ def wait_for_tool_card_badge(page, label: str, expected_text: str, timeout: floa
     )
 
 
+def wait_for_tool_card_priority(
+    page,
+    label: str,
+    expected_priority: str,
+    timeout: float = 20000,
+) -> None:
+    page.wait_for_function(
+        """
+        ([label, expected]) => {
+          const card = document.querySelector(`[data-tool-card-label="${label}"]`);
+          if (card) {
+            return card.getAttribute("data-tool-card-priority") === expected;
+          }
+          if (expected === "primary") {
+            return document.querySelectorAll('[data-tool-card-priority="primary"]').length > 0;
+          }
+          return false;
+        }
+        """,
+        arg=[label, expected_priority],
+        timeout=timeout,
+    )
+
+
 def get_body_text(page) -> str:
     return page.evaluate("() => document.body ? document.body.innerText : ''")
 
@@ -329,6 +353,9 @@ class BrowserSmokeTests(unittest.TestCase):
                 wait_for_tool_card_badge(page, ACTION_REUPLOAD, "上传", timeout=20000)
                 wait_for_tool_card_badge(page, ACTION_SEARCH_SEEK, "搜索", timeout=20000)
                 wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)
+                wait_for_tool_card_priority(page, ACTION_REUPLOAD, "primary", timeout=20000)
+                wait_for_tool_card_priority(page, "ä¸Šä¼ è‹±æ–‡ç®€åŽ†", "primary", timeout=20000)
+                wait_for_tool_card_priority(page, ACTION_SEARCH_SEEK, "standard", timeout=20000)
                 upload_resume_with_retry(page, pdf_path, UPLOAD_SUCCESS)
                 wait_for_tool_card_status(page, ACTION_SEARCH_SEEK, "可用", timeout=20000)
 

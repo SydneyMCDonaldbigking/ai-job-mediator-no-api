@@ -228,6 +228,17 @@
         text-align: left;
         transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
       }
+      #${panelId} .tool-card[data-tool-card-priority="primary"] {
+        border-color: rgba(255, 73, 146, 0.34);
+        background: linear-gradient(180deg, rgba(255, 73, 146, 0.2), rgba(255, 255, 255, 0.06));
+        box-shadow: inset 0 0 0 1px rgba(255, 123, 183, 0.14);
+      }
+      #${panelId} .tool-card[data-tool-card-priority="primary"] .tool-card-label {
+        color: #fff4f8;
+      }
+      #${panelId} .tool-card[data-tool-card-priority="primary"] .tool-card-meta {
+        color: rgba(255, 232, 240, 0.84);
+      }
       #${panelId} .tool-card:hover:not(:disabled) {
         transform: translateY(-1px);
         border-color: rgba(255, 73, 146, 0.48);
@@ -411,6 +422,7 @@
             waiting:
               "\u9875\u9762\u8fd8\u5728\u52a0\u8f7d\u8fd9\u4e2a\u52a8\u4f5c\uff0c\u7a0d\u7b49\u4e00\u4e0b\u5c31\u4f1a\u53d8\u4e3a\u53ef\u70b9\u3002",
           };
+          const priority = section.title === "\u7b80\u5386" ? "primary" : "standard";
           const tooltip = disabled ? content.waiting : content.ready;
           const statusLabel = disabled ? "\u7b49\u5f85\u4e2d" : "\u53ef\u7528";
           const statusKey = disabled ? "waiting" : "ready";
@@ -419,6 +431,7 @@
               type="button"
               class="tool-card"
               data-tool-card-label="${label}"
+              data-tool-card-priority="${priority}"
               ${disabled ? "disabled" : ""}
             >
               <span>
