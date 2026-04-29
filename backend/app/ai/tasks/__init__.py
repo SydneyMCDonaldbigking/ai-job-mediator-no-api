@@ -5,6 +5,9 @@ from app.ai.tasks.evaluate_job import (
     generate_job_evaluation,
 )
 from app.ai.tasks.generate_cover_letter import generate_cover_letter_text
+from app.ai.tasks.generate_outreach_message import (
+    generate_outreach_message_text,
+)
 from app.ai.tasks.generate_search_queries import (
     GeneratedSearchQueries,
     generate_search_queries,
@@ -16,6 +19,7 @@ __all__ = [
     "GeneratedSearchQueries",
     "generate_cover_letter_text",
     "generate_job_evaluation",
+    "generate_outreach_message_text",
     "generate_search_queries",
     "to_seek_search_plan",
 ]
