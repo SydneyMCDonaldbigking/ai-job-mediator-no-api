@@ -1,0 +1,24 @@
+import json
+
+from langchain_core.prompts import PromptTemplate
+
+from app.prompts import get_language_name
+from app.prompts.templates import OUTREACH_MESSAGE_PROMPT
+
+
+GENERATE_OUTREACH_MESSAGE_PROMPT_TEMPLATE = PromptTemplate.from_template(
+    OUTREACH_MESSAGE_PROMPT.strip()
+)
+
+
+def build_generate_outreach_message_prompt(
+    *,
+    resume_data: dict,
+    job_description: str,
+    language: str,
+) -> str:
+    return GENERATE_OUTREACH_MESSAGE_PROMPT_TEMPLATE.format(
+        job_description=job_description,
+        resume_data=json.dumps(resume_data, ensure_ascii=False),
+        output_language=get_language_name(language),
+    )

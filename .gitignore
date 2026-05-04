@@ -126,6 +126,7 @@ config.json
 # Local runtime and recovery artifacts
 .files/
 .tmp_recover/
+.tmp/
 *.log
 frontend/.files/
 frontend/.logs/
@@ -137,9 +138,20 @@ frontend/_tmp_check_app.py
 .tmp-smoke-tests/
 frontend/data/.chat_history_migrated
 
-# Runtime user data (do not publish resumes or chat history)
+# Local runtime data and personal files
+backend/.env
+backend/data/database.json
+backend/data/portals.yml
+backend/data/scan-history.tsv
+frontend/.env
 frontend/data/users.json
 frontend/data/chats/
 frontend/public/chat-assets/
 frontend/.files/
+frontend/.tmp-tests/
 .files/
+.tmp/
+.tmp-manual-e2e/
+.tmp-smoke/
+.tmp-smoke-tests/
+.tmp_recover/

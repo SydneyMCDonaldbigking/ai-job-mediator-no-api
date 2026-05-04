@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import asyncio
 import base64
 import html
@@ -16,10 +16,12 @@ os.environ.setdefault(
     or "local-dev-secret-change-me-2026-very-long",
 )
 import chainlit as cl
+import httpx
 import yaml
 from chainlit.context import context
 from chainlit.types import ThreadDict
 from pydantic import BaseModel, Field
+from backend_chat_store import BackendTinyDBDataLayer
 from local_chat_store import LocalJsonDataLayer
 APP_DIR = Path(__file__).resolve().parent
 def env_flag(name: str, default: bool = False) -> bool:
@@ -30,6 +32,8 @@ def env_flag(name: str, default: bool = False) -> bool:
 TEST_MODE_ENABLED = env_flag("CHAINLIT_TEST_MODE")
 DATA_DIR = Path(os.getenv("CHAINLIT_APP_DATA_DIR") or (APP_DIR / "data"))
 PUBLIC_DIR = Path(os.getenv("CHAINLIT_APP_PUBLIC_DIR") or (APP_DIR / "public"))
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5-72b")
 APP_USERNAME = os.getenv("CHAINLIT_APP_USERNAME", "local-user")
 APP_PASSWORD = os.getenv("CHAINLIT_APP_PASSWORD", "job-mediator-123")
 APP_DISPLAY_NAME = os.getenv("CHAINLIT_APP_DISPLAY_NAME", "Local User")
@@ -508,6 +512,215 @@ MultilingualResumeAssets.model_rebuild()
 ScheduledScanConfig.model_rebuild()
 DiscoveredJobRecord.model_rebuild()
 ScheduledScanSettingsResponse.model_rebuild()
+class ResumeMatcherBackend:
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip("/")
+    @staticmethod
+    def _extract_filename(content_disposition: str | None, fallback: str) -> str:
+        if not content_disposition:
+            return fallback
+        for part in content_disposition.split(";"):
+            part = part.strip()
+            if part.lower().startswith("filename="):
+                return part.split("=", 1)[1].strip().strip('"') or fallback
+        return fallback
+    async def upload_resume(
+        self,
+        file_path: str,
+        file_name: str,
+        mime_type: str,
+        resume_language: str = "en",
+    ) -> ResumeUploadResponse:
+        with open(file_path, "rb") as handle:
+            files = {"file": (file_name, handle, mime_type)}
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/v1/resumes/upload",
+                    files=files,
+                    data={"resume_language": resume_language},
+                )
+        response.raise_for_status()
+        return ResumeUploadResponse.model_validate(response.json())
+    async def get_resume(self, resume_id: str) -> ResumeFetchResponse:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/resumes",
+                params={"resume_id": resume_id},
+            )
+        response.raise_for_status()
+        return ResumeFetchResponse.model_validate(response.json())
+    async def get_resume_status(self, resume_id: str) -> str:
+        payload = await self.get_resume(resume_id)
+        return payload.data.raw_resume.processing_status
+    async def get_resume_content(self, resume_id: str) -> str:
+        payload = await self.get_resume(resume_id)
+        return (payload.data.raw_resume.content or "").strip()
+    async def list_resumes(self, include_master: bool = True) -> ResumeListResponse:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/resumes/list",
+                params={"include_master": str(include_master).lower()},
+            )
+        response.raise_for_status()
+        return ResumeListResponse.model_validate(response.json())
+    async def upload_job_description(self, resume_id: str, job_description: str) -> str:
+        payload = {
+            "job_descriptions": [job_description],
+            "resume_id": resume_id,
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/jobs/upload",
+                json=payload,
+            )
+        response.raise_for_status()
+        result = JobUploadResponse.model_validate(response.json())
+        if not result.job_id:
+            raise ValueError("后端没有返回有效的 job_id。")
+        return result.job_id[0]
+    async def preview_resume_improvement(
+        self,
+        resume_id: str,
+        job_id: str,
+        prompt_id: str = "keywords",
+    ) -> ImproveResumeResponse:
+        payload = {
+            "resume_id": resume_id,
+            "job_id": job_id,
+            "prompt_id": prompt_id,
+        }
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/resumes/improve/preview",
+                json=payload,
+            )
+        response.raise_for_status()
+        return ImproveResumeResponse.model_validate(response.json())
+    async def improve_resume(
+        self,
+        resume_id: str,
+        job_id: str,
+        prompt_id: str = "keywords",
+    ) -> ImproveResumeResponse:
+        payload = {
+            "resume_id": resume_id,
+            "job_id": job_id,
+            "prompt_id": prompt_id,
+        }
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/resumes/improve",
+                json=payload,
+            )
+        response.raise_for_status()
+        return ImproveResumeResponse.model_validate(response.json())
+    async def evaluate_job(
+        self,
+        resume: dict[str, Any] | str,
+        job_description: str,
+    ) -> CareerOpsEvaluateResponse:
+        payload = {
+            "resume": resume,
+            "job_description": job_description,
+        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/evaluate-job",
+                json=payload,
+            )
+        response.raise_for_status()
+        return CareerOpsEvaluateResponse.model_validate(response.json())
+    async def generate_tailored_pdf(
+        self,
+        resume: dict[str, Any] | str,
+        job_description: str,
+    ) -> dict[str, Any]:
+        payload = {
+            "resume": resume,
+            "job_description": job_description,
+        }
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/generate-tailored-pdf",
+                json=payload,
+            )
+        response.raise_for_status()
+        return {
+            "filename": self._extract_filename(
+                response.headers.get("Content-Disposition"),
+                "tailored_resume.pdf",
+            ),
+            "content": response.content,
+        }
+
+    async def scan_jobs(self) -> CareerOpsScanResponse:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/scan-jobs",
+            )
+        response.raise_for_status()
+        return CareerOpsScanResponse.model_validate(response.json())
+    async def search_seek_jobs(self, resume_id: str) -> SeekSearchResponse:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/jobs/search/seek",
+                json={"resume_id": resume_id},
+            )
+        response.raise_for_status()
+        return SeekSearchResponse.model_validate(response.json())
+    async def search_doda_jobs(self, resume_id: str) -> SeekSearchResponse:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/jobs/search/doda",
+                json={"resume_id": resume_id},
+            )
+        response.raise_for_status()
+        return SeekSearchResponse.model_validate(response.json())
+    async def get_portals_config(self) -> PortalsConfig:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/config/portals",
+            )
+        response.raise_for_status()
+        return PortalsConfig.model_validate(response.json())
+    async def update_portals_config(self, config: dict[str, Any]) -> PortalsConfig:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.put(
+                f"{self.base_url}/api/v1/config/portals",
+                json=config,
+            )
+        response.raise_for_status()
+        return PortalsConfig.model_validate(response.json())
+    async def get_scheduled_scan_settings(self) -> ScheduledScanSettingsResponse:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/api/v1/scheduled-scan/settings",
+            )
+        response.raise_for_status()
+        return ScheduledScanSettingsResponse.model_validate(response.json())
+    async def update_scheduled_scan_settings(
+        self,
+        config: dict[str, Any],
+    ) -> ScheduledScanSettingsResponse:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.put(
+                f"{self.base_url}/api/v1/scheduled-scan/settings",
+                json=config,
+            )
+        response.raise_for_status()
+        return ScheduledScanSettingsResponse.model_validate(response.json())
+    async def mark_discovered_job_status(
+        self,
+        job_key: str,
+        status: str,
+    ) -> DiscoveredJobRecord:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/scheduled-scan/jobs/status",
+                json={"job_key": job_key, "status": status},
+            )
+        response.raise_for_status()
+        return DiscoveredJobRecord.model_validate(response.json())
 class InMemoryTestBackend:
     """Tiny in-process backend used by browser smoke tests."""
     SIMPLE_PDF_BYTES = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
@@ -1004,11 +1217,20 @@ def ensure_runtime_assets() -> None:
     script = script.replace('"job-mediator-123"', json.dumps(APP_PASSWORD), 1)
     auto_login_js.write_text(script, encoding="utf-8")
 ensure_runtime_assets()
-backend: InMemoryTestBackend = InMemoryTestBackend()
-data_layer = LocalJsonDataLayer(
-    data_dir=DATA_DIR,
-    public_dir=PUBLIC_DIR,
-)
+backend: ResumeMatcherBackend | InMemoryTestBackend
+if TEST_MODE_ENABLED:
+    backend = InMemoryTestBackend()
+    data_layer = LocalJsonDataLayer(
+        data_dir=DATA_DIR,
+        public_dir=PUBLIC_DIR,
+    )
+else:
+    backend = ResumeMatcherBackend(BACKEND_URL)
+    data_layer = BackendTinyDBDataLayer(
+        base_url=BACKEND_URL,
+        data_dir=DATA_DIR,
+        public_dir=PUBLIC_DIR,
+    )
 def apply_thread_metadata_to_session(
     thread: ThreadDict | dict[str, Any] | None,
     session: Any | None = None,
@@ -2529,6 +2751,16 @@ async def on_message(message: cl.Message) -> None:
             await handle_optimization_request(user_text, resume_id)
             return
         await cl.Message(content=build_general_reply(user_text)).send()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text.strip() or exc.response.reason_phrase
+        await cl.Message(
+            content=(
+                "The backend did not return a successful result this time.\n\n"
+                f"- status: `{exc.response.status_code}`\n"
+                f"- detail: `{detail[:300]}`\n\n"
+                "Send the same JD again and I can keep debugging with you."
+            )
+        ).send()
     except Exception as exc:  # pragma: no cover - defensive branch
         await cl.Message(
             content=f"Something went wrong while handling this request: `{str(exc)[:300]}`",

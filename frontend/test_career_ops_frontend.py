@@ -1,4 +1,4 @@
-﻿import importlib.util
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -642,3 +642,434 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertIsNone(normalized["feishu_webhook_url"])
 
 
+class CareerOpsFrontendBackendClientTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.frontend_app = load_frontend_app_module()
+        RecordingAsyncClient.requests = []
+        RecordingAsyncClient.responses = {}
+
+    async def test_evaluate_job_posts_resume_and_jd(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/evaluate-job",
+            ): MockHTTPResponse(
+                {
+                    "request_id": "req-1",
+                    "data": {
+                        "overall_score": 4.0,
+                        "overall_label": "Good fit",
+                        "executive_summary": "Looks solid.",
+                        "archetype": "Operator",
+                        "af_scores": {"A": 4.0, "B": 4.0, "C": 4.0, "D": 4.0, "E": 4.0, "F": 4.0},
+                        "dimensions": [],
+                        "tailoring_priorities": [],
+                        "interview_focus": [],
+                        "keyword_targets": [],
+                        "market_data": None,
+                    },
+                }
+            )
+        }
+
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            result = await self.frontend_app.ResumeMatcherBackend(
+                "http://backend"
+            ).evaluate_job("resume text", "job description")
+
+        self.assertEqual(result.data.overall_label, "Good fit")
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("POST", "http://backend/api/evaluate-job"))
+        self.assertEqual(kwargs["json"]["resume"], "resume text")
+        self.assertEqual(kwargs["json"]["job_description"], "job description")
+
+    async def test_scan_jobs_calls_scan_endpoint(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/scan-jobs",
+            ): MockHTTPResponse(
+                {
+                    "request_id": "scan-1",
+                    "data": {
+                        "scanned_companies": 1,
+                        "total_jobs_found": 2,
+                        "filtered_out": 0,
+                        "duplicates": 0,
+                        "new_offers": [],
+                        "errors": [],
+                    },
+                }
+            )
+        }
+
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            result = await self.frontend_app.ResumeMatcherBackend(
+                "http://backend"
+            ).scan_jobs()
+
+        self.assertEqual(result.data.scanned_companies, 1)
+        self.assertEqual(
+            RecordingAsyncClient.requests[0][:2],
+            ("POST", "http://backend/api/scan-jobs"),
+        )
+
+    async def test_generate_tailored_pdf_posts_resume_and_jd(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/generate-tailored-pdf",
+            ): MockHTTPResponse(
+                content=b"%PDF-1.4 fake pdf bytes",
+                headers={
+                    "Content-Disposition": 'attachment; filename="tailored_resume.pdf"'
+                },
+            )
+        }
+
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            result = await self.frontend_app.ResumeMatcherBackend(
+                "http://backend"
+            ).generate_tailored_pdf("resume text", "job description")
+
+        self.assertEqual(result["filename"], "tailored_resume.pdf")
+        self.assertEqual(result["content"], b"%PDF-1.4 fake pdf bytes")
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("POST", "http://backend/api/generate-tailored-pdf"))
+        self.assertEqual(kwargs["json"]["resume"], "resume text")
+        self.assertEqual(kwargs["json"]["job_description"], "job description")
+
+    async def test_get_and_update_portals_config_use_config_routes(self):
+        RecordingAsyncClient.responses = {
+            (
+                "GET",
+                "http://backend/api/v1/config/portals",
+            ): MockHTTPResponse(
+                {
+                    "title_filter": {"positive": ["engineer"]},
+                    "search_queries": [],
+                    "tracked_companies": [],
+                }
+            ),
+            (
+                "PUT",
+                "http://backend/api/v1/config/portals",
+            ): MockHTTPResponse(
+                {
+                    "title_filter": {"positive": ["engineer"]},
+                    "search_queries": [],
+                    "tracked_companies": [
+                        {
+                            "name": "Anthropic",
+                            "careers_url": "https://jobs.example.com",
+                            "enabled": True,
+                        }
+                    ],
+                }
+            ),
+        }
+
+        backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            current = await backend.get_portals_config()
+            updated = await backend.update_portals_config(
+                {
+                    "tracked_companies": [
+                        {
+                            "name": "Anthropic",
+                            "careers_url": "https://jobs.example.com",
+                            "enabled": True,
+                        }
+                    ]
+                }
+            )
+
+        self.assertEqual(current.title_filter.positive, ["engineer"])
+        self.assertEqual(updated.tracked_companies[0].name, "Anthropic")
+        self.assertEqual(
+            RecordingAsyncClient.requests[0][:2],
+            ("GET", "http://backend/api/v1/config/portals"),
+        )
+        self.assertEqual(
+            RecordingAsyncClient.requests[1][:2],
+            ("PUT", "http://backend/api/v1/config/portals"),
+        )
+
+    async def test_search_seek_jobs_posts_resume_id(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/v1/jobs/search/seek",
+            ): MockHTTPResponse(
+                {
+                    "plan": {
+                        "resume_id": "resume-1",
+                        "source": "seek",
+                        "candidate_profile_summary": "Python backend engineer",
+                        "keywords": ["python backend engineer"],
+                        "location": "Sydney NSW",
+                    },
+                    "jobs": [],
+                    "stats": {
+                        "keywords_generated": 1,
+                        "queries_attempted": 1,
+                        "queries_succeeded": 1,
+                        "raw_jobs_found": 0,
+                        "jobs_after_dedupe": 0,
+                    },
+                    "errors": [],
+                }
+            )
+        }
+
+        backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            await backend.search_seek_jobs("resume-1")
+
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("POST", "http://backend/api/v1/jobs/search/seek"))
+        self.assertEqual(kwargs["json"]["resume_id"], "resume-1")
+
+    async def test_search_doda_jobs_posts_resume_id(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/v1/jobs/search/doda",
+            ): MockHTTPResponse(
+                {
+                    "plan": {
+                        "resume_id": "resume-ja-1",
+                        "source": "doda",
+                        "candidate_profile_summary": "Python と FastAPI を使ったバックエンド経験。",
+                        "keywords": ["バックエンドエンジニア"],
+                        "location": "東京",
+                    },
+                    "jobs": [],
+                    "stats": {
+                        "keywords_generated": 1,
+                        "queries_attempted": 1,
+                        "queries_succeeded": 1,
+                        "raw_jobs_found": 0,
+                        "jobs_after_dedupe": 0,
+                    },
+                    "errors": [],
+                }
+            )
+        }
+
+        backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            await backend.search_doda_jobs("resume-ja-1")
+
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("POST", "http://backend/api/v1/jobs/search/doda"))
+        self.assertEqual(kwargs["json"]["resume_id"], "resume-ja-1")
+
+    async def test_upload_resume_posts_language_form_field(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/v1/resumes/upload",
+            ): MockHTTPResponse(
+                {
+                    "message": "stored",
+                    "request_id": "req-upload",
+                    "resume_id": "resume-ja",
+                    "processing_status": "ready",
+                    "is_master": False,
+                }
+            )
+        }
+        temp_file = FRONTEND_DIR / ".tmp-tests" / "resume-ja.pdf"
+        temp_file.parent.mkdir(parents=True, exist_ok=True)
+        temp_file.write_bytes(b"%PDF-1.4\n")
+
+        try:
+            backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+            with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+                result = await backend.upload_resume(
+                    str(temp_file),
+                    "resume-ja.pdf",
+                    "application/pdf",
+                    resume_language="ja",
+                )
+        finally:
+            temp_file.unlink(missing_ok=True)
+
+        self.assertEqual(result.resume_id, "resume-ja")
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("POST", "http://backend/api/v1/resumes/upload"))
+        self.assertEqual(kwargs["data"]["resume_language"], "ja")
+
+    async def test_list_resumes_includes_master_query_param(self):
+        RecordingAsyncClient.responses = {
+            (
+                "GET",
+                "http://backend/api/v1/resumes/list",
+            ): MockHTTPResponse(
+                {
+                    "request_id": "resume-list",
+                    "data": [
+                        {
+                            "resume_id": "resume-en",
+                            "filename": "resume-en.pdf",
+                            "is_master": True,
+                            "parent_id": None,
+                            "processing_status": "ready",
+                            "created_at": "2026-05-04T08:00:00+00:00",
+                            "updated_at": "2026-05-04T08:00:00+00:00",
+                            "title": None,
+                        }
+                    ],
+                }
+            )
+        }
+
+        backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            result = await backend.list_resumes(include_master=True)
+
+        self.assertEqual(result.data[0].resume_id, "resume-en")
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("GET", "http://backend/api/v1/resumes/list"))
+        self.assertEqual(kwargs["params"]["include_master"], "true")
+
+    async def test_get_and_update_scheduled_scan_settings_use_scheduled_scan_routes(self):
+        RecordingAsyncClient.responses = {
+            (
+                "GET",
+                "http://backend/api/v1/scheduled-scan/settings",
+            ): MockHTTPResponse(
+                {
+                    "config": {
+                        "enabled": True,
+                        "run_time_local": "09:00",
+                        "timezone": "Australia/Sydney",
+                        "seek_enabled": True,
+                        "doda_enabled": False,
+                        "boss_enabled": False,
+                        "feishu_enabled": True,
+                        "feishu_webhook_url": "https://open.feishu.cn/fake-webhook",
+                        "high_score_threshold": 0.8,
+                        "last_run_at": None,
+                        "last_run_date_local": None,
+                        "last_run_status": None,
+                        "last_error": None,
+                        "last_result_counts": {},
+                    },
+                    "assets": {
+                        "candidate_id": "default",
+                        "resume_en_id": "resume-en",
+                        "resume_ja_id": None,
+                        "resume_zh_id": None,
+                        "updated_at": None,
+                    },
+                    "recent_new_jobs": [],
+                    "high_score_unapplied_jobs": [],
+                }
+            ),
+            (
+                "PUT",
+                "http://backend/api/v1/scheduled-scan/settings",
+            ): MockHTTPResponse(
+                {
+                    "config": {
+                        "enabled": True,
+                        "run_time_local": "21:30",
+                        "timezone": "Australia/Sydney",
+                        "seek_enabled": True,
+                        "doda_enabled": False,
+                        "boss_enabled": False,
+                        "feishu_enabled": True,
+                        "feishu_webhook_url": "https://open.feishu.cn/fake-webhook",
+                        "high_score_threshold": 0.85,
+                        "last_run_at": None,
+                        "last_run_date_local": None,
+                        "last_run_status": None,
+                        "last_error": None,
+                        "last_result_counts": {},
+                    },
+                    "assets": {
+                        "candidate_id": "default",
+                        "resume_en_id": "resume-en",
+                        "resume_ja_id": None,
+                        "resume_zh_id": None,
+                        "updated_at": None,
+                    },
+                    "recent_new_jobs": [],
+                    "high_score_unapplied_jobs": [],
+                }
+            ),
+        }
+
+        backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            current = await backend.get_scheduled_scan_settings()
+            updated = await backend.update_scheduled_scan_settings(
+                {
+                    "enabled": True,
+                    "run_time_local": "21:30",
+                    "timezone": "Australia/Sydney",
+                    "seek_enabled": True,
+                    "doda_enabled": False,
+                    "boss_enabled": False,
+                    "feishu_enabled": True,
+                    "feishu_webhook_url": "https://open.feishu.cn/fake-webhook",
+                    "high_score_threshold": 0.85,
+                }
+            )
+
+        self.assertTrue(current.config.enabled)
+        self.assertEqual(updated.config.run_time_local, "21:30")
+        self.assertTrue(updated.config.feishu_enabled)
+        self.assertEqual(updated.config.high_score_threshold, 0.85)
+        self.assertEqual(
+            RecordingAsyncClient.requests[0][:2],
+            ("GET", "http://backend/api/v1/scheduled-scan/settings"),
+        )
+        self.assertEqual(
+            RecordingAsyncClient.requests[1][:2],
+            ("PUT", "http://backend/api/v1/scheduled-scan/settings"),
+        )
+
+    async def test_mark_discovered_job_status_posts_job_key_and_status(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/v1/scheduled-scan/jobs/status",
+            ): MockHTTPResponse(
+                {
+                    "job_key": "seek:https://www.seek.com.au/job/123",
+                    "source": "seek",
+                    "resume_language": "en",
+                    "title": "Senior Backend Engineer",
+                    "company": "Example Co",
+                    "location": "Sydney NSW",
+                    "job_url": "https://www.seek.com.au/job/123",
+                    "summary": "Build APIs",
+                    "match_score": 0.91,
+                    "discovered_at": "2026-04-17T00:05:00+00:00",
+                    "first_seen_at": "2026-04-17T00:05:00+00:00",
+                    "last_seen_at": "2026-04-17T00:05:00+00:00",
+                    "is_new": True,
+                    "status": "applied",
+                }
+            )
+        }
+
+        backend = self.frontend_app.ResumeMatcherBackend("http://backend")
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            result = await backend.mark_discovered_job_status(
+                "seek:https://www.seek.com.au/job/123",
+                "applied",
+            )
+
+        self.assertEqual(result.status, "applied")
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual((method, url), ("POST", "http://backend/api/v1/scheduled-scan/jobs/status"))
+        self.assertEqual(kwargs["json"]["job_key"], "seek:https://www.seek.com.au/job/123")
+        self.assertEqual(kwargs["json"]["status"], "applied")
+
+
+if __name__ == "__main__":
+    unittest.main()

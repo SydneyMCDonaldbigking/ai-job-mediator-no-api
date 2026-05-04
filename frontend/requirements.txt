@@ -1,4 +1,5 @@
 chainlit
+httpx
 python-dotenv
 pydantic
 PyYAML
