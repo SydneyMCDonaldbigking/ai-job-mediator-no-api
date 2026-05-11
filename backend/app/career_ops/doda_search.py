@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote, urljoin
 
+import httpx
 from playwright.async_api import async_playwright
 
 from app.ai.tasks import generate_search_queries, to_seek_search_plan
+from app.career_ops.search_fallback import (
+    is_search_fallback_configured,
+    search_jobs_via_fallback,
+)
 from app.career_ops.seek_search import _resume_from_record, _resume_text, score_seek_job
 from app.database import db
 from app.schemas.models import (
@@ -98,12 +104,9 @@ async def build_doda_search_plan(
 
 
 def build_doda_search_url(*, keyword: str, location: str) -> str:
-    query = quote_plus(keyword)
-    area = quote_plus(location)
-    return (
-        "https://doda.jp/DodaFront/View/JobSearchList/"
-        f"-kw__{query}/-pr__13/-ar__3/-ci__{area}/"
-    )
+    del location
+    query = quote(keyword.strip(), safe="")
+    return f"https://doda.jp/DodaFront/View/JobSearchList/j_k__/{query}/"
 
 
 class _DodaListHTMLParser(HTMLParser):
@@ -115,10 +118,23 @@ class _DodaListHTMLParser(HTMLParser):
         self._inside_card = False
         self._current: dict[str, Any] | None = None
         self._field: str | None = None
+        self._fallback_href: str | None = None
+        self._fallback_text: list[str] = []
+        self._fallback_seen_urls: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_map = {key: value or "" for key, value in attrs}
         classes = attr_map.get("class", "")
+        href = attr_map.get("href", "")
+        if (
+            tag == "a"
+            and "JobSearchDetail" in href
+            and not self._inside_card
+        ):
+            self._fallback_href = urljoin(self.base_url, href)
+            self._fallback_text = []
+            return
+
         if "jobCard" in classes:
             self._inside_card = True
             self._current = {"search_keyword": self.search_keyword, "is_new": False}
@@ -151,6 +167,11 @@ class _DodaListHTMLParser(HTMLParser):
             self._current["is_new"] = True
 
     def handle_data(self, data: str) -> None:
+        if self._fallback_href is not None:
+            text = data.strip()
+            if text:
+                self._fallback_text.append(text)
+            return
         if not self._inside_card or not self._field or self._current is None:
             return
         text = data.strip()
@@ -160,11 +181,39 @@ class _DodaListHTMLParser(HTMLParser):
         self._current[self._field] = f"{existing} {text}".strip()
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._fallback_href is not None:
+            text = " ".join(self._fallback_text).strip()
+            url = self._fallback_href
+            self._fallback_href = None
+            self._fallback_text = []
+            if not text or url in self._fallback_seen_urls:
+                return
+            self._fallback_seen_urls.add(url)
+            company, title = split_doda_link_title(text)
+            self.jobs.append(
+                SeekRawJob(
+                    search_keyword=self.search_keyword,
+                    title=title,
+                    company=company,
+                    job_url=url,
+                )
+            )
+            return
         if tag == "a" and self._inside_card and self._current is not None and self._current.get("title") and self._current.get("company"):
             self.jobs.append(SeekRawJob.model_validate(self._current))
             self._inside_card = False
             self._current = None
             self._field = None
+
+
+def split_doda_link_title(text: str) -> tuple[str, str]:
+    normalized = " ".join(text.split())
+    if not normalized:
+        return "doda", ""
+    parts = normalized.split(maxsplit=1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return "doda", normalized
 
 
 def parse_doda_list_html(
@@ -219,18 +268,96 @@ def normalize_doda_jobs(
     return sorted(normalized, key=lambda item: item.match_score, reverse=True)
 
 
-async def scrape_doda_search_results(*, keyword: str, location: str) -> list[SeekRawJob]:
-    url = build_doda_search_url(keyword=keyword, location=location)
+async def fetch_doda_search_html(url: str) -> str:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        ),
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    }
+    def fetch_sync() -> str:
+        response = httpx.get(
+            url,
+            timeout=20.0,
+            follow_redirects=True,
+            headers=headers,
+        )
+        response.raise_for_status()
+        return response.text
+
+    return await asyncio.to_thread(fetch_sync)
+
+
+async def fetch_doda_search_html_with_browser(url: str) -> str:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
         try:
             page = await browser.new_page()
-            await page.goto(url, wait_until="domcontentloaded")
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            if response and response.status >= 400:
+                raise RuntimeError(f"doda returned HTTP {response.status} for {url}")
             await page.wait_for_timeout(1000)
             html = await page.content()
         finally:
             await browser.close()
+    return html
+
+
+async def scrape_doda_search_results(*, keyword: str, location: str) -> list[SeekRawJob]:
+    url = build_doda_search_url(keyword=keyword, location=location)
+    try:
+        html = await fetch_doda_search_html(url)
+    except Exception:
+        html = await fetch_doda_search_html_with_browser(url)
     return parse_doda_list_html(html, base_url="https://doda.jp", search_keyword=keyword)
+
+
+async def scrape_doda_keywords_concurrently(
+    *,
+    keywords: list[str],
+    location: str,
+) -> tuple[list[SeekRawJob], list[SeekSearchError], int]:
+    async def scrape_keyword(keyword: str) -> tuple[list[SeekRawJob], SeekSearchError | None]:
+        direct_error: str | None = None
+        try:
+            results = await scrape_doda_search_results(keyword=keyword, location=location)
+            if results:
+                return results, None
+            direct_error = "No doda jobs parsed from the search page."
+        except Exception as exc:
+            direct_error = str(exc).strip() or exc.__class__.__name__
+
+        if is_search_fallback_configured():
+            try:
+                fallback_results = await search_jobs_via_fallback(
+                    source="doda",
+                    keyword=keyword,
+                    location=location,
+                )
+            except Exception as exc:
+                fallback_error = str(exc).strip() or exc.__class__.__name__
+                return [], SeekSearchError(
+                    search_keyword=keyword,
+                    message=f"{direct_error}; search fallback failed: {fallback_error}",
+                )
+            if fallback_results:
+                return fallback_results, None
+            direct_error = f"{direct_error}; search fallback returned no doda job links."
+
+        return [], SeekSearchError(search_keyword=keyword, message=direct_error)
+
+    results = await asyncio.gather(*(scrape_keyword(keyword) for keyword in keywords))
+    raw_jobs: list[SeekRawJob] = []
+    errors: list[SeekSearchError] = []
+
+    for jobs, error in results:
+        raw_jobs.extend(jobs)
+        if error:
+            errors.append(error)
+
+    return raw_jobs, errors, len(keywords) - len(errors)
 
 
 async def run_manual_doda_search(
@@ -249,17 +376,10 @@ async def run_manual_doda_search(
         location_text=location or DEFAULT_DODA_LOCATION,
     )
 
-    raw_jobs: list[SeekRawJob] = []
-    errors: list[SeekSearchError] = []
-    queries_succeeded = 0
-
-    for keyword in plan.keywords:
-        try:
-            results = await scrape_doda_search_results(keyword=keyword, location=plan.location)
-            raw_jobs.extend(results)
-            queries_succeeded += 1
-        except Exception as exc:
-            errors.append(SeekSearchError(search_keyword=keyword, message=str(exc)))
+    raw_jobs, errors, queries_succeeded = await scrape_doda_keywords_concurrently(
+        keywords=plan.keywords,
+        location=plan.location,
+    )
 
     jobs = normalize_doda_jobs(raw_jobs, resume=resume, location=plan.location)
     stats = SeekSearchStats(

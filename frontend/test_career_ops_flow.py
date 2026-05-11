@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 FRONTEND_DIR = Path(__file__).resolve().parent
@@ -54,6 +54,7 @@ class FakeBackend:
         self.job_uploads = []
         self.improve_calls = []
         self.generated_payloads = []
+        self.translate_calls = []
 
     async def upload_resume(
         self,
@@ -154,6 +155,10 @@ class FakeBackend:
             "filename": "tailored_resume.pdf",
             "content": b"%PDF-1.4\nfake\n",
         }
+
+    async def translate_job_description_to_chinese(self, job_description: str):
+        self.translate_calls.append(job_description)
+        return "岗位职责：构建 API。任职要求：Python 和 FastAPI。"
 
 
 class FakeFile:
@@ -289,6 +294,45 @@ class CareerOpsFlowTests(unittest.IsolatedAsyncioTestCase):
             ["Please upload a Japanese resume. It will be linked to Japanese job sites."],
         )
 
+    async def test_resume_upload_shows_progress_message(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_data_layer = FakeDataLayer()
+        fake_backend = FakeBackend(frontend_app)
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-upload-progress",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+        resume_file = SimpleNamespace(
+            path="C:/tmp/master_v1.pdf",
+            name="master_v1.pdf",
+            mime="application/pdf",
+        )
+
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "context", fake_context),
+        ):
+            await frontend_app.process_resume_upload(resume_file, resume_language="en")
+
+        progress_messages = [
+            message
+            for message in FakeMessage.created
+            if "master_v1.pdf" in message.content and "100%" in message.content
+        ]
+        self.assertEqual(len(progress_messages), 1)
+        self.assertTrue(progress_messages[0].sent)
+        self.assertTrue(progress_messages[0].updated)
+        self.assertIn("[##########]", progress_messages[0].content)
+
     async def test_text_command_can_trigger_doda_search(self):
         frontend_app = load_frontend_app_module()
         fake_user_session = FakeUserSession()
@@ -313,6 +357,315 @@ class CareerOpsFlowTests(unittest.IsolatedAsyncioTestCase):
             )
 
         handle_doda_search.assert_awaited_once()
+
+    async def test_seek_search_uses_english_resume_asset_when_session_resume_missing(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_user_session.set(frontend_app.SESSION_RESUME_ID, None)
+        fake_user_session.set(frontend_app.SESSION_THREAD_NAMED, True)
+        fake_data_layer = FakeDataLayer()
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-seek-asset",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+
+        class BackendWithEnglishAsset:
+            def __init__(self):
+                self.search_calls = []
+
+            async def get_scheduled_scan_settings(self):
+                return frontend_app.ScheduledScanSettingsResponse.model_validate(
+                    {
+                        "config": {
+                            "enabled": False,
+                            "run_time_local": "09:00",
+                            "timezone": "Australia/Sydney",
+                            "seek_enabled": True,
+                            "doda_enabled": False,
+                            "boss_enabled": False,
+                            "feishu_enabled": False,
+                            "feishu_webhook_url": None,
+                            "high_score_threshold": 0.75,
+                            "last_run_at": None,
+                            "last_run_date_local": None,
+                            "last_run_status": None,
+                            "last_error": None,
+                            "last_result_counts": {},
+                        },
+                        "assets": {
+                            "resume_en_id": "resume-en",
+                            "resume_ja_id": None,
+                            "resume_zh_id": None,
+                            "updated_at": "2026-05-05T00:00:00+00:00",
+                        },
+                        "recent_new_jobs": [],
+                        "high_score_unapplied_jobs": [],
+                    }
+                )
+
+            async def search_seek_jobs(self, resume_id: str):
+                self.search_calls.append(resume_id)
+                return frontend_app.SeekSearchResponse.model_validate(
+                    {
+                        "plan": {
+                            "resume_id": resume_id,
+                            "source": "seek",
+                            "candidate_profile_summary": "profile",
+                            "keywords": ["python backend engineer"],
+                            "location": "Sydney NSW",
+                        },
+                        "jobs": [],
+                        "stats": {
+                            "keywords_generated": 1,
+                            "queries_attempted": 1,
+                            "queries_succeeded": 1,
+                            "raw_jobs_found": 0,
+                            "jobs_after_dedupe": 0,
+                        },
+                        "errors": [],
+                    }
+                )
+
+        fake_backend = BackendWithEnglishAsset()
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "context", fake_context),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "restore_session_from_current_thread", return_value=False),
+        ):
+            await frontend_app.handle_seek_search_request()
+
+        self.assertEqual(fake_backend.search_calls, ["resume-en"])
+        self.assertEqual(fake_user_session.get(frontend_app.SESSION_RESUME_ID), "resume-en")
+        self.assertFalse(
+            any("Upload a primary resume first" in message.content for message in FakeMessage.created)
+        )
+
+    async def test_jd_message_with_stale_upload_element_does_not_reupload_resume(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_user_session.set(frontend_app.SESSION_RESUME_ID, "master-123")
+        fake_user_session.set(frontend_app.SESSION_RESUME_STATUS, "ready")
+        fake_user_session.set(frontend_app.SESSION_THREAD_NAMED, True)
+        fake_user_session.set(frontend_app.SESSION_PENDING_ACTION, None)
+        fake_user_session.set(frontend_app.SESSION_PENDING_RESUME_LANGUAGE, None)
+        fake_data_layer = FakeDataLayer()
+        fake_backend = FakeBackend(frontend_app)
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-stale-file",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+        stale_file = SimpleNamespace(
+            name="master_resume.pdf",
+            path="C:/tmp/master_resume.pdf",
+            mime="application/pdf",
+        )
+        jd_text = "Responsibilities: build APIs\nRequirements: Python and FastAPI"
+
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app.cl, "File", FakeFile),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "context", fake_context),
+        ):
+            await frontend_app.on_message(
+                SimpleNamespace(content=jd_text, elements=[stale_file])
+            )
+
+        self.assertEqual(fake_backend.upload_calls, [])
+        self.assertEqual(fake_backend.improve_calls, [{"resume_id": "master-123", "job_id": "job-1"}])
+        self.assertEqual(fake_user_session.get(frontend_app.SESSION_LAST_JOB_DESCRIPTION), jd_text)
+
+    async def test_jd_message_displays_chinese_but_uses_original_for_resume_work(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_user_session.set(frontend_app.SESSION_RESUME_ID, "master-123")
+        fake_user_session.set(frontend_app.SESSION_RESUME_STATUS, "ready")
+        fake_user_session.set(frontend_app.SESSION_THREAD_NAMED, True)
+        fake_user_session.set(frontend_app.SESSION_PENDING_ACTION, None)
+        fake_data_layer = FakeDataLayer()
+        fake_backend = FakeBackend(frontend_app)
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-manual-jd",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+        jd_text = "Responsibilities: build APIs\nRequirements: Python and FastAPI"
+
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "context", fake_context),
+        ):
+            await frontend_app.on_message(SimpleNamespace(content=jd_text, elements=None))
+
+        self.assertEqual(fake_backend.translate_calls, [jd_text])
+        self.assertEqual(fake_backend.job_uploads[0]["job_description"], jd_text)
+        self.assertTrue(
+            any(
+                "### 中文 JD" in message.content and "岗位职责：构建 API。" in message.content
+                for message in FakeMessage.created
+            )
+        )
+
+    async def test_seek_search_displays_translated_summaries_but_remembers_original_jobs(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_user_session.set(frontend_app.SESSION_RESUME_ID, "resume-en")
+        fake_user_session.set(frontend_app.SESSION_RESUME_STATUS, "ready")
+        fake_data_layer = FakeDataLayer()
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-seek-translated-list",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+
+        class SearchBackend(FakeBackend):
+            async def search_seek_jobs(self, resume_id: str):
+                return frontend_app.SeekSearchResponse.model_validate(
+                    {
+                        "plan": {
+                            "resume_id": resume_id,
+                            "source": "seek",
+                            "candidate_profile_summary": "profile",
+                            "keywords": ["python backend engineer"],
+                            "location": "Sydney NSW",
+                        },
+                        "jobs": [
+                            {
+                                "job_id": "seek:https://www.seek.com.au/job/123",
+                                "source": "seek",
+                                "search_keyword": "python backend engineer",
+                                "title": "Senior Backend Engineer",
+                                "company": "Example Co",
+                                "location": "Sydney NSW",
+                                "job_url": "https://www.seek.com.au/job/123",
+                                "summary": "Responsibilities: build APIs.",
+                                "match_score": 0.91,
+                            }
+                        ],
+                        "stats": {
+                            "keywords_generated": 1,
+                            "queries_attempted": 1,
+                            "queries_succeeded": 1,
+                            "raw_jobs_found": 1,
+                            "jobs_after_dedupe": 1,
+                        },
+                        "errors": [],
+                    }
+                )
+
+        fake_backend = SearchBackend(frontend_app)
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "context", fake_context),
+        ):
+            await frontend_app.handle_seek_search_request()
+
+        cached = fake_user_session.get(frontend_app.SESSION_SEARCH_RESULT_JOBS)
+        self.assertEqual(
+            cached["seek:https://www.seek.com.au/job/123"]["summary"],
+            "Responsibilities: build APIs.",
+        )
+        self.assertTrue(
+            any(
+                message.updated and "岗位职责：构建 API。" in message.content
+                for message in FakeMessage.created
+            )
+        )
+
+    async def test_search_job_analysis_displays_chinese_but_analyzes_original_jd(self):
+        frontend_app = load_frontend_app_module()
+        fake_user_session = FakeUserSession()
+        fake_user_session.set(frontend_app.SESSION_RESUME_ID, "master-123")
+        fake_user_session.set(frontend_app.SESSION_RESUME_STATUS, "ready")
+        fake_data_layer = FakeDataLayer()
+        fake_context = SimpleNamespace(
+            session=SimpleNamespace(
+                thread_id="thread-search-jd",
+                user=SimpleNamespace(id="user-1", identifier="local-user"),
+            )
+        )
+        job = frontend_app.SeekSearchJob.model_validate(
+            {
+                "job_id": "seek:https://www.seek.com.au/job/123",
+                "source": "seek",
+                "search_keyword": "python backend engineer",
+                "title": "Senior Backend Engineer",
+                "company": "Example Co",
+                "location": "Sydney NSW",
+                "job_url": "https://www.seek.com.au/job/123",
+                "summary": "Responsibilities: build APIs. Requirements: Python.",
+                "match_score": 0.91,
+            }
+        )
+        original_jd = frontend_app.build_search_job_description(job)
+        fake_user_session.set(
+            frontend_app.SESSION_SEARCH_RESULT_JOBS,
+            {job.job_id: job.model_dump(mode="json")},
+        )
+
+        class TranslatingBackend(FakeBackend):
+            def __init__(self):
+                super().__init__(frontend_app)
+                self.translate_calls = []
+
+            async def translate_job_description_to_chinese(self, job_description: str):
+                self.translate_calls.append(job_description)
+                return "岗位职责：构建 API。任职要求：Python。"
+
+        fake_backend = TranslatingBackend()
+        handle_analysis = AsyncMock()
+        FakeMessage.created = []
+
+        with (
+            patch.object(frontend_app.cl, "user_session", fake_user_session),
+            patch.object(frontend_app.cl, "Message", FakeMessage),
+            patch.object(frontend_app, "build_tool_actions", return_value=[]),
+            patch.object(frontend_app, "data_layer", fake_data_layer),
+            patch.object(frontend_app, "backend", fake_backend),
+            patch.object(frontend_app, "context", fake_context),
+            patch.object(frontend_app, "handle_analysis_request", handle_analysis),
+        ):
+            await frontend_app.handle_search_job_analysis_request(job.job_id)
+
+        self.assertEqual(fake_backend.translate_calls, [original_jd])
+        self.assertTrue(
+            any("中文 JD" in message.content and "岗位职责：构建 API" in message.content for message in FakeMessage.created)
+        )
+        handle_analysis.assert_awaited_once()
+        args, kwargs = handle_analysis.await_args
+        self.assertEqual(args[0], original_jd)
+        self.assertEqual(args[1], "master-123")
+        self.assertTrue(kwargs["force"])
+        self.assertNotIn("岗位职责：构建 API", args[0])
 
     async def test_delete_then_pdf_request_recreates_thread_with_user_binding(self):
         frontend_app = load_frontend_app_module()

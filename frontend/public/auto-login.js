@@ -545,13 +545,20 @@
     if (!latest) return null;
     return decodeScanPayload(latest[1]);
   }
+  function getLatestResumeAssetsPayload() {
+    const text = document.body ? document.body.textContent || "" : "";
+    const matches = Array.from(text.matchAll(/RESUME_ASSETS_PAYLOAD::([A-Za-z0-9+/=]+)/g));
+    const latest = matches[matches.length - 1];
+    if (!latest) return null;
+    return decodeScanPayload(latest[1]);
+  }
 
   function hideScanPayloadMarkers() {
     const panel = document.getElementById(panelId);
     Array.from(document.querySelectorAll("p, div, span, code")).forEach((node) => {
       if (panel && panel.contains(node)) return;
       const text = (node.textContent || "").trim();
-      if (text.startsWith("SCAN_RESULTS_PAYLOAD::")) {
+      if (text.startsWith("SCAN_RESULTS_PAYLOAD::") || text.startsWith("RESUME_ASSETS_PAYLOAD::")) {
         node.style.display = "none";
       }
     });
@@ -632,22 +639,77 @@
       });
     });
   }
+  function resumeStatusText(payload, language) {
+    const resume = payload?.resumes?.[language];
+    if (!resume?.exists) {
+      const names = { en: "英文", ja: "日文", zh: "中文" };
+      return `当前没有${names[language] || ""}简历，需要上传。`;
+    }
+    const time = resume.updated_at || "未知时间";
+    const filename = resume.filename ? `：${resume.filename}` : "";
+    const names = { en: "英文", ja: "日文", zh: "中文" };
+    return `${names[language] || ""}简历已存在${filename}（上次上传时间 ${time}）。再次点击可重新上传。`;
+  }
+  function cardOverrideForLabel(label, payload) {
+    if (!payload) return null;
+    if (label === "上传英文简历" || label === "重新上传主简历") {
+      return {
+        meta: resumeStatusText(payload, "en"),
+        statusLabel: payload.resumes?.en?.exists ? "已存在" : "需上传",
+        statusKey: payload.resumes?.en?.exists ? "ready" : "waiting",
+      };
+    }
+    if (label === "上传日文简历") {
+      return {
+        meta: resumeStatusText(payload, "ja"),
+        statusLabel: payload.resumes?.ja?.exists ? "已存在" : "需上传",
+        statusKey: payload.resumes?.ja?.exists ? "ready" : "waiting",
+      };
+    }
+    if (label === "上传中文简历") {
+      return {
+        meta: resumeStatusText(payload, "zh"),
+        statusLabel: payload.resumes?.zh?.exists ? "已存在" : "需上传",
+        statusKey: payload.resumes?.zh?.exists ? "ready" : "waiting",
+      };
+    }
+    if (label === "SEEK 搜索岗位" && payload.search?.seek?.missing) {
+      return {
+        disabled: true,
+        meta: "当前没有英文简历，需要先上传英文简历后才能搜索 SEEK。",
+        statusLabel: "缺英文简历",
+        statusKey: "waiting",
+      };
+    }
+    if (label === "doda 搜索岗位" && payload.search?.doda?.missing) {
+      return {
+        disabled: true,
+        meta: "当前没有日文简历，需要先上传日文简历后才能搜索 doda。",
+        statusLabel: "缺日文简历",
+        statusKey: "waiting",
+      };
+    }
+    return null;
+  }
 
   function renderPanel() {
     const panel = ensurePanel();
     const sectionsHost = panel.querySelector(".tool-panel-sections");
     if (!sectionsHost) return;
 
+    const resumeAssetsPayload = getLatestResumeAssetsPayload();
     let actionableCount = 0;
     const fragments = panelSections.map((section) => {
       const cards = section.items
         .map((label) => {
           const original = getLatestMatchingButton(label);
+          const override = cardOverrideForLabel(label, resumeAssetsPayload);
           const disabled =
             !original ||
             original.disabled ||
             original.getAttribute("aria-disabled") === "true" ||
-            original.hasAttribute("disabled");
+            original.hasAttribute("disabled") ||
+            override?.disabled === true;
           if (!disabled) {
             actionableCount += 1;
           }
@@ -668,9 +730,9 @@
           const tagsMarkup = (content.tags || [])
             .map((tag) => `<span class="tool-card-tag">${tag}</span>`)
             .join("");
-          const tooltip = disabled ? content.waiting : content.ready;
-          const statusLabel = disabled ? "\u7b49\u5f85\u4e2d" : "\u53ef\u7528";
-          const statusKey = disabled ? "waiting" : "ready";
+          const tooltip = override?.meta || (disabled ? content.waiting : content.ready);
+          const statusLabel = override?.statusLabel || (disabled ? "\u7b49\u5f85\u4e2d" : "\u53ef\u7528");
+          const statusKey = override?.statusKey || (disabled ? "waiting" : "ready");
           return `
             <button
               type="button"

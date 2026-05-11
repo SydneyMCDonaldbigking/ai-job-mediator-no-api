@@ -60,6 +60,29 @@ async def test_evaluate_job_returns_structured_scores(
     assert payload["dimensions"][0]["key"] == "archetype_fit"
 
 
+@patch("app.routers.career_ops.translate_job_description_to_chinese", new_callable=AsyncMock)
+async def test_translate_job_description_to_chinese_returns_translated_text(
+    mock_translate,
+    client,
+):
+    mock_translate.return_value = "岗位职责：构建 API。任职要求：Python。"
+
+    async with client:
+        response = await client.post(
+            "/api/translate-job-description",
+            json={
+                "job_description": "Responsibilities: Build APIs. Requirements: Python.",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_job_description"] == "岗位职责：构建 API。任职要求：Python。"
+    mock_translate.assert_awaited_once_with(
+        "Responsibilities: Build APIs. Requirements: Python."
+    )
+
+
 @patch("app.routers.career_ops.generate_tailored_resume_pdf", new_callable=AsyncMock)
 async def test_generate_tailored_pdf_returns_pdf_bytes(
     mock_generate_pdf,

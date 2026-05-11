@@ -1,4 +1,5 @@
 from datetime import datetime
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 from app.career_ops.scheduled_scan import (
@@ -9,6 +10,7 @@ from app.career_ops.scheduled_scan import (
     mark_job_status,
     persist_discovered_jobs,
     run_due_scheduled_scan_once,
+    save_scheduled_scan_config,
     should_run_scheduled_scan,
 )
 from app.schemas.models import DiscoveredJobRecord, SeekSearchJob
@@ -41,6 +43,33 @@ def test_get_enabled_sources_requires_language_resume():
     sources = get_enabled_sources(assets, config)
 
     assert sources == ["seek"]
+
+
+def test_get_enabled_sources_omits_boss_until_source_is_supported():
+    assets = build_multilingual_resume_assets(
+        resume_en_id="resume-en",
+        resume_ja_id="resume-ja",
+        resume_zh_id="resume-zh",
+    )
+    config = {
+        "seek_enabled": True,
+        "doda_enabled": True,
+        "boss_enabled": True,
+    }
+
+    sources = get_enabled_sources(assets, config)
+
+    assert sources == ["seek", "doda"]
+
+
+def test_save_scheduled_scan_config_forces_boss_disabled():
+    with patch("app.career_ops.scheduled_scan.db.save_scheduled_scan_config") as save:
+        save.return_value = {"boss_enabled": False}
+
+        save_scheduled_scan_config({"boss_enabled": True})
+
+    saved_payload = save.call_args.args[0]
+    assert saved_payload["boss_enabled"] is False
 
 
 def test_should_run_scheduled_scan_when_time_has_arrived_and_not_run_today():
@@ -234,6 +263,91 @@ async def test_run_due_scheduled_scan_once_runs_doda_when_japanese_resume_exists
         await run_due_scheduled_scan_once()
 
     mock_doda.assert_awaited_once()
+
+
+async def test_run_due_scheduled_scan_once_runs_enabled_sources_concurrently():
+    active = 0
+    max_active = 0
+
+    def response_for(source: str):
+        return type(
+            "SearchResponse",
+            (),
+            {
+                "jobs": [
+                    SeekSearchJob(
+                        job_id=f"{source}:https://example.com/job/123",
+                        source=source,
+                        search_keyword="backend engineer",
+                        title="Backend Engineer",
+                        company="Example Co",
+                        location="Sydney NSW",
+                        job_url=f"https://example.com/{source}/123",
+                        match_score=0.91,
+                    )
+                ],
+                "stats": type("Stats", (), {"raw_jobs_found": 1})(),
+            },
+        )()
+
+    async def fake_search(source: str):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            active -= 1
+        return response_for(source)
+
+    async def fake_seek_search(**_: object):
+        return await fake_search("seek")
+
+    async def fake_doda_search(**_: object):
+        return await fake_search("doda")
+
+    with (
+        patch(
+            "app.career_ops.scheduled_scan.load_scheduled_scan_config",
+            return_value={
+                "enabled": True,
+                "run_time_local": "09:00",
+                "timezone": "Australia/Sydney",
+                "seek_enabled": True,
+                "doda_enabled": True,
+                "boss_enabled": False,
+                "feishu_enabled": False,
+                "feishu_webhook_url": None,
+                "last_run_date_local": None,
+            },
+        ),
+        patch(
+            "app.career_ops.scheduled_scan.load_multilingual_resume_assets",
+            return_value={
+                "resume_en_id": "resume-en",
+                "resume_ja_id": "resume-ja",
+                "resume_zh_id": None,
+            },
+        ),
+        patch(
+            "app.career_ops.scheduled_scan.run_manual_seek_search",
+            new=AsyncMock(side_effect=fake_seek_search),
+        ),
+        patch(
+            "app.career_ops.scheduled_scan.run_manual_doda_search",
+            new=AsyncMock(side_effect=fake_doda_search),
+        ),
+        patch(
+            "app.career_ops.scheduled_scan.should_run_scheduled_scan",
+            return_value=True,
+        ),
+        patch("app.career_ops.scheduled_scan.save_scheduled_scan_config"),
+        patch("app.career_ops.scheduled_scan.db.get_discovered_jobs_map", return_value={}),
+        patch("app.career_ops.scheduled_scan.db.upsert_discovered_jobs"),
+    ):
+        await run_due_scheduled_scan_once()
+
+    assert max_active == 2
 
 
 def test_filter_high_score_unapplied_jobs_excludes_applied_and_low_score():

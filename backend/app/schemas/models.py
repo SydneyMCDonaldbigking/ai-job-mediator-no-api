@@ -476,6 +476,19 @@ class CareerOpsEvaluateResponse(BaseModel):
     data: CareerOpsEvaluationData
 
 
+class TranslateJobDescriptionRequest(BaseModel):
+    """Request payload for POST /api/translate-job-description."""
+
+    job_description: str
+
+
+class TranslateJobDescriptionResponse(BaseModel):
+    """Translated JD payload for frontend display."""
+
+    request_id: str
+    translated_job_description: str
+
+
 class GenerateTailoredPDFRequest(BaseModel):
     """Request payload for POST /api/generate-tailored-pdf."""
 

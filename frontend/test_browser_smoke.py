@@ -419,7 +419,7 @@ class BrowserSmokeTests(unittest.TestCase):
                 )
                 wait_for_current_tool_binding(page, ACTION_SEARCH_SEEK, timeout=20000)
                 wait_for_body_text(page, UPLOAD_PROMPT, timeout=20000)
-                wait_for_tool_card_meta(page, ACTION_REUPLOAD, "打开上传框", timeout=20000)
+                wait_for_tool_card_meta(page, ACTION_REUPLOAD, "已存在", timeout=20000)
                 wait_for_tool_card_meta(page, ACTION_SEARCH_SEEK, "英文简历", timeout=20000)
                 wait_for_tool_card_meta(page, "扫描职位", "已配置站点", timeout=20000)
                 wait_for_tool_card_badge(page, ACTION_REUPLOAD, "上传", timeout=20000)

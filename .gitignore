@@ -126,6 +126,8 @@ config.json
 # Local runtime and recovery artifacts
 .files/
 .tmp_recover/
+.tmp/
+pytest-cache-files-*/
 *.log
 frontend/.files/
 frontend/.logs/

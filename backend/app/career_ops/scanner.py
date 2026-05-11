@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import logging
 import shutil
@@ -217,33 +218,45 @@ async def scan_portals(
     new_offers: list[CareerOpsScannedOffer] = []
 
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        for company in companies:
+        async def fetch_company_jobs(
+            company: dict[str, Any],
+        ) -> tuple[str, list[dict[str, str]], str | None]:
             api_info = detect_api(company)
-            if not api_info:
-                continue
-
             company_name = str(company.get("name", "Unknown"))
+            if not api_info:
+                return company_name, [], None
             try:
                 response = await client.get(api_info["url"])
                 response.raise_for_status()
                 payload = response.json()
                 offers = _PARSERS[api_info["type"]](payload, company_name)
-                total_jobs_found += len(offers)
-
-                for offer in offers:
-                    title = offer.get("title", "")
-                    url = offer.get("url", "")
-                    if not matcher(title):
-                        filtered_out += 1
-                        continue
-                    if not url or url in seen_urls:
-                        duplicates += 1
-                        continue
-                    seen_urls.add(url)
-                    new_offers.append(CareerOpsScannedOffer(**offer))
+                return company_name, offers, None
             except Exception as exc:
                 logger.warning("Portal scan failed for %s: %s", company_name, exc)
-                errors.append(f"{company_name}: {exc}")
+                return company_name, [], f"{company_name}: {exc}"
+
+        company_results = await asyncio.gather(
+            *(fetch_company_jobs(company) for company in companies)
+        )
+
+    for _company_name, offers, error in company_results:
+        if error:
+            errors.append(error)
+            continue
+
+        total_jobs_found += len(offers)
+
+        for offer in offers:
+            title = offer.get("title", "")
+            url = offer.get("url", "")
+            if not matcher(title):
+                filtered_out += 1
+                continue
+            if not url or url in seen_urls:
+                duplicates += 1
+                continue
+            seen_urls.add(url)
+            new_offers.append(CareerOpsScannedOffer(**offer))
 
     if new_offers:
         _append_history(new_offers, history_path=history_path)

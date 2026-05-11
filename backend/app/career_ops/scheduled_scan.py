@@ -52,7 +52,9 @@ def load_scheduled_scan_config() -> dict[str, Any]:
 
 def save_scheduled_scan_config(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = ScheduledScanConfig.model_validate(payload)
-    return db.save_scheduled_scan_config(normalized.model_dump())
+    data = normalized.model_dump()
+    data["boss_enabled"] = False
+    return db.save_scheduled_scan_config(data)
 
 
 def list_recent_new_jobs(limit: int = 10) -> list[dict[str, Any]]:
@@ -81,8 +83,6 @@ def get_enabled_sources(
         sources.append("seek")
     if config.get("doda_enabled") and assets.resume_ja_id:
         sources.append("doda")
-    if config.get("boss_enabled") and assets.resume_zh_id:
-        sources.append("boss")
     return sources
 
 
@@ -242,39 +242,43 @@ async def run_due_scheduled_scan_once() -> None:
     errors: list[str] = []
     all_new_jobs: list[DiscoveredJobRecord] = []
 
-    if "seek" in enabled_sources and assets.resume_en_id:
+    async def run_enabled_source(
+        source: str,
+        resume_id: str,
+    ) -> tuple[str, str, Any | None, str | None]:
         try:
-            result = await run_manual_seek_search(resume_id=assets.resume_en_id)
-            persistence = persist_discovered_jobs(
-                result.jobs,
-                existing_jobs=db.get_discovered_jobs_map(),
-                resume_language="en",
-            )
-            all_new_jobs.extend(persistence.new_jobs)
-            result_counts["seek"] = {
-                "raw_jobs_found": result.stats.raw_jobs_found,
-                "new_jobs": persistence.stats["new_jobs"],
-            }
+            if source == "seek":
+                return source, "en", await run_manual_seek_search(resume_id=resume_id), None
+            if source == "doda":
+                return source, "ja", await run_manual_doda_search(resume_id=resume_id), None
+            return source, "", None, f"{source}: unsupported source"
         except Exception as exc:
-            logger.warning("Scheduled SEEK scan failed: %s", exc)
-            errors.append(f"seek: {exc}")
+            logger.warning("Scheduled %s scan failed: %s", source, exc)
+            return source, "", None, f"{source}: {exc}"
 
+    scan_tasks = []
+    if "seek" in enabled_sources and assets.resume_en_id:
+        scan_tasks.append(run_enabled_source("seek", assets.resume_en_id))
     if "doda" in enabled_sources and assets.resume_ja_id:
-        try:
-            result = await run_manual_doda_search(resume_id=assets.resume_ja_id)
-            persistence = persist_discovered_jobs(
-                result.jobs,
-                existing_jobs=db.get_discovered_jobs_map(),
-                resume_language="ja",
-            )
-            all_new_jobs.extend(persistence.new_jobs)
-            result_counts["doda"] = {
-                "raw_jobs_found": result.stats.raw_jobs_found,
-                "new_jobs": persistence.stats["new_jobs"],
-            }
-        except Exception as exc:
-            logger.warning("Scheduled doda scan failed: %s", exc)
-            errors.append(f"doda: {exc}")
+        scan_tasks.append(run_enabled_source("doda", assets.resume_ja_id))
+
+    for source, resume_language, result, error in await asyncio.gather(*scan_tasks):
+        if error:
+            errors.append(error)
+            continue
+        if result is None:
+            continue
+
+        persistence = persist_discovered_jobs(
+            result.jobs,
+            existing_jobs=db.get_discovered_jobs_map(),
+            resume_language=resume_language,
+        )
+        all_new_jobs.extend(persistence.new_jobs)
+        result_counts[source] = {
+            "raw_jobs_found": result.stats.raw_jobs_found,
+            "new_jobs": persistence.stats["new_jobs"],
+        }
 
     high_score_unapplied_jobs = filter_high_score_unapplied_jobs(
         all_new_jobs,

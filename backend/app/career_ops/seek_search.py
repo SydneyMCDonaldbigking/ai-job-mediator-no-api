@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import re
+from html import unescape
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote, urljoin, urlparse
 
 from playwright.async_api import async_playwright
 
 from app.ai.tasks import generate_search_queries, to_seek_search_plan
+from app.career_ops.search_fallback import (
+    is_search_fallback_configured,
+    search_jobs_via_fallback,
+)
 from app.database import db
 from app.schemas.models import (
     ResumeData,
@@ -21,6 +28,7 @@ from app.schemas.models import (
 
 
 DEFAULT_SEEK_LOCATION = "Sydney NSW"
+SEEK_DETAIL_FETCH_LIMIT = 5
 
 
 def _resume_text(resume: ResumeData) -> str:
@@ -50,10 +58,13 @@ async def build_seek_search_plan(
 
 
 def build_seek_search_url(*, keyword: str, location: str) -> str:
-    normalized_location = location.strip().replace(",", "")
+    keyword_slug = "-".join(part for part in re.split(r"\s+", keyword.strip()) if part)
+    location_slug = "-".join(
+        part for part in re.split(r"[\s,]+", location.strip()) if part
+    )
     return (
-        f"https://www.seek.com.au/{quote_plus(keyword)}/jobs"
-        f"?where={quote_plus(normalized_location)}"
+        "https://www.seek.com.au/"
+        f"{quote(keyword_slug, safe='-')}-jobs/in-{quote(location_slug, safe='-')}"
     )
 
 
@@ -126,6 +137,113 @@ def parse_seek_list_html(
     return parser.jobs
 
 
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if text:
+            self.parts.append(text)
+
+    def get_text(self) -> str:
+        return " ".join(self.parts)
+
+
+def _strip_html_text(value: str) -> str:
+    parser = _HTMLTextExtractor()
+    parser.feed(unescape(value))
+    text = parser.get_text() or unescape(value)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+class _SeekDetailHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ld_json_scripts: list[str] = []
+        self.detail_parts: list[str] = []
+        self._inside_ld_json = False
+        self._inside_detail = False
+        self._detail_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key: value or "" for key, value in attrs}
+        if tag == "script" and "ld+json" in attr_map.get("type", "").lower():
+            self._inside_ld_json = True
+            return
+
+        automation = attr_map.get("data-automation", "")
+        if automation in {"jobAdDetails", "jobDescription", "jobDescriptionText"}:
+            self._inside_detail = True
+            self._detail_depth = 1
+            return
+
+        if self._inside_detail:
+            self._detail_depth += 1
+
+    def handle_data(self, data: str) -> None:
+        if self._inside_ld_json:
+            self.ld_json_scripts.append(data)
+            return
+        if self._inside_detail:
+            text = data.strip()
+            if text:
+                self.detail_parts.append(text)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._inside_ld_json:
+            self._inside_ld_json = False
+            return
+        if self._inside_detail:
+            self._detail_depth -= 1
+            if self._detail_depth <= 0:
+                self._inside_detail = False
+                self._detail_depth = 0
+
+
+def _json_ld_job_description(payload: Any) -> str | None:
+    if isinstance(payload, list):
+        for item in payload:
+            description = _json_ld_job_description(item)
+            if description:
+                return description
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    node_type = payload.get("@type")
+    node_types = node_type if isinstance(node_type, list) else [node_type]
+    if any(str(item).lower() == "jobposting" for item in node_types):
+        description = payload.get("description")
+        if isinstance(description, str) and description.strip():
+            return _strip_html_text(description)
+
+    for value in payload.values():
+        description = _json_ld_job_description(value)
+        if description:
+            return description
+    return None
+
+
+def parse_seek_detail_html(html: str) -> str | None:
+    parser = _SeekDetailHTMLParser()
+    parser.feed(html)
+
+    for script in parser.ld_json_scripts:
+        try:
+            payload = json.loads(script.strip())
+        except json.JSONDecodeError:
+            continue
+        description = _json_ld_job_description(payload)
+        if description:
+            return description
+
+    detail_text = re.sub(r"\s+", " ", " ".join(parser.detail_parts)).strip()
+    return detail_text or None
+
+
 def dedupe_seek_jobs(jobs: list[SeekRawJob]) -> list[SeekRawJob]:
     seen: set[str] = set()
     result: list[SeekRawJob] = []
@@ -190,12 +308,119 @@ async def scrape_seek_search_results(*, keyword: str, location: str) -> list[See
         browser = await playwright.chromium.launch(headless=True)
         try:
             page = await browser.new_page()
-            await page.goto(url, wait_until="domcontentloaded")
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            if response and response.status >= 400:
+                raise RuntimeError(f"SEEK returned HTTP {response.status} for {url}")
             await page.wait_for_timeout(1000)
             html = await page.content()
         finally:
             await browser.close()
     return parse_seek_list_html(html, base_url="https://www.seek.com.au", search_keyword=keyword)
+
+
+def _is_seek_detail_job_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.netloc.lower().endswith("seek.com.au") and parsed.path.startswith("/job/")
+
+
+async def scrape_seek_job_detail(url: str) -> str | None:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            if response and response.status >= 400:
+                raise RuntimeError(f"SEEK returned HTTP {response.status} for {url}")
+            await page.wait_for_timeout(1000)
+            html = await page.content()
+        finally:
+            await browser.close()
+    return parse_seek_detail_html(html)
+
+
+async def enrich_seek_jobs_with_details(
+    jobs: list[SeekRawJob],
+    *,
+    detail_limit: int = SEEK_DETAIL_FETCH_LIMIT,
+) -> list[SeekRawJob]:
+    if detail_limit <= 0:
+        return jobs
+
+    enriched = list(jobs)
+    semaphore = asyncio.Semaphore(2)
+
+    async def enrich_one(index: int, job: SeekRawJob) -> tuple[int, SeekRawJob]:
+        async with semaphore:
+            try:
+                detail = await scrape_seek_job_detail(job.job_url)
+            except Exception:
+                return index, job
+        if not detail:
+            return index, job
+        current_summary = (job.summary or "").strip()
+        if len(detail) <= len(current_summary):
+            return index, job
+        return index, job.model_copy(update={"summary": detail})
+
+    tasks = []
+    for index, job in enumerate(jobs):
+        if len(tasks) >= detail_limit:
+            break
+        if _is_seek_detail_job_url(job.job_url):
+            tasks.append(enrich_one(index, job))
+
+    if not tasks:
+        return enriched
+
+    for index, job in await asyncio.gather(*tasks):
+        enriched[index] = job
+    return enriched
+
+
+async def scrape_seek_keywords_concurrently(
+    *,
+    keywords: list[str],
+    location: str,
+) -> tuple[list[SeekRawJob], list[SeekSearchError], int]:
+    async def scrape_keyword(keyword: str) -> tuple[list[SeekRawJob], SeekSearchError | None]:
+        direct_error: str | None = None
+        try:
+            results = await scrape_seek_search_results(keyword=keyword, location=location)
+            if results:
+                return results, None
+            direct_error = "No SEEK jobs parsed from the search page."
+        except Exception as exc:
+            direct_error = str(exc).strip() or exc.__class__.__name__
+
+        if is_search_fallback_configured():
+            try:
+                fallback_results = await search_jobs_via_fallback(
+                    source="seek",
+                    keyword=keyword,
+                    location=location,
+                )
+            except Exception as exc:
+                fallback_error = str(exc).strip() or exc.__class__.__name__
+                return [], SeekSearchError(
+                    search_keyword=keyword,
+                    message=f"{direct_error}; search fallback failed: {fallback_error}",
+                )
+            if fallback_results:
+                return fallback_results, None
+            direct_error = f"{direct_error}; search fallback returned no SEEK job links."
+
+        return [], SeekSearchError(search_keyword=keyword, message=direct_error)
+
+    results = await asyncio.gather(*(scrape_keyword(keyword) for keyword in keywords))
+    raw_jobs: list[SeekRawJob] = []
+    errors: list[SeekSearchError] = []
+
+    for jobs, error in results:
+        raw_jobs.extend(jobs)
+        if error:
+            errors.append(error)
+
+    return raw_jobs, errors, len(keywords) - len(errors)
 
 
 def _resume_from_record(resume_record: dict[str, Any]) -> ResumeData:
@@ -219,24 +444,19 @@ async def run_manual_seek_search(
         location=location or DEFAULT_SEEK_LOCATION,
     )
 
-    raw_jobs: list[SeekRawJob] = []
-    errors: list[SeekSearchError] = []
-    queries_succeeded = 0
+    raw_jobs, errors, queries_succeeded = await scrape_seek_keywords_concurrently(
+        keywords=plan.keywords,
+        location=plan.location,
+    )
 
-    for keyword in plan.keywords:
-        try:
-            results = await scrape_seek_search_results(keyword=keyword, location=plan.location)
-            raw_jobs.extend(results)
-            queries_succeeded += 1
-        except Exception as exc:
-            errors.append(SeekSearchError(search_keyword=keyword, message=str(exc)))
-
+    raw_jobs_found = len(raw_jobs)
+    raw_jobs = await enrich_seek_jobs_with_details(raw_jobs)
     jobs = normalize_seek_jobs(raw_jobs, resume=resume, location=plan.location)
     stats = SeekSearchStats(
         keywords_generated=len(plan.keywords),
         queries_attempted=len(plan.keywords),
         queries_succeeded=queries_succeeded,
-        raw_jobs_found=len(raw_jobs),
+        raw_jobs_found=raw_jobs_found,
         jobs_after_dedupe=len(jobs),
     )
     return SeekManualSearchResponse(plan=plan, jobs=jobs, stats=stats, errors=errors)
