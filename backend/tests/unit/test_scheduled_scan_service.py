@@ -10,6 +10,7 @@ from app.career_ops.scheduled_scan import (
     mark_job_status,
     persist_discovered_jobs,
     run_due_scheduled_scan_once,
+    save_scheduled_scan_config,
     should_run_scheduled_scan,
 )
 from app.schemas.models import DiscoveredJobRecord, SeekSearchJob
@@ -42,6 +43,33 @@ def test_get_enabled_sources_requires_language_resume():
     sources = get_enabled_sources(assets, config)
 
     assert sources == ["seek"]
+
+
+def test_get_enabled_sources_omits_boss_until_source_is_supported():
+    assets = build_multilingual_resume_assets(
+        resume_en_id="resume-en",
+        resume_ja_id="resume-ja",
+        resume_zh_id="resume-zh",
+    )
+    config = {
+        "seek_enabled": True,
+        "doda_enabled": True,
+        "boss_enabled": True,
+    }
+
+    sources = get_enabled_sources(assets, config)
+
+    assert sources == ["seek", "doda"]
+
+
+def test_save_scheduled_scan_config_forces_boss_disabled():
+    with patch("app.career_ops.scheduled_scan.db.save_scheduled_scan_config") as save:
+        save.return_value = {"boss_enabled": False}
+
+        save_scheduled_scan_config({"boss_enabled": True})
+
+    saved_payload = save.call_args.args[0]
+    assert saved_payload["boss_enabled"] is False
 
 
 def test_should_run_scheduled_scan_when_time_has_arrived_and_not_run_today():

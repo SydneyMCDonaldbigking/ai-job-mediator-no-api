@@ -55,6 +55,7 @@ SESSION_RESUME_STATUS = "resume_status"
 SESSION_LAST_UPLOAD_NAME = "last_upload_name"
 SESSION_LAST_TAILORED_RESUME_ID = "tailored_resume_id"
 SESSION_LAST_JOB_DESCRIPTION = "last_job_description"
+SESSION_SEARCH_RESULT_JOBS = "search_result_jobs"
 SESSION_THREAD_NAMED = "thread_named"
 SESSION_PENDING_ACTION = "pending_action"
 SESSION_PENDING_RESUME_LANGUAGE = "pending_resume_language"
@@ -186,6 +187,7 @@ ACTION_DOWNLOAD_TAILORED_PDF = "career_ops_download_tailored_pdf"
 ACTION_SCAN_JOBS = "career_ops_scan_jobs"
 ACTION_SEARCH_SEEK = "career_ops_search_seek"
 ACTION_SEARCH_DODA = "career_ops_search_doda"
+ACTION_ANALYZE_SEARCH_JOB = "career_ops_analyze_search_job"
 ACTION_VIEW_PORTALS = "career_ops_view_portals"
 ACTION_EDIT_PORTALS = "career_ops_edit_portals"
 ACTION_UPLOAD_EN_RESUME = "career_ops_upload_en_resume"
@@ -248,7 +250,6 @@ def normalize_scheduled_scan_settings_input(settings: dict[str, Any]) -> dict[st
         ),
         "seek_enabled": bool(settings.get("scheduled_scan_seek_enabled")),
         "doda_enabled": bool(settings.get("scheduled_scan_doda_enabled")),
-        "boss_enabled": bool(settings.get("scheduled_scan_boss_enabled")),
         "feishu_enabled": bool(settings.get("scheduled_scan_feishu_enabled")),
         "feishu_webhook_url": parse_scheduled_scan_field_input(
             "feishu_webhook_url",
@@ -305,13 +306,6 @@ def build_scheduled_scan_chat_settings(
                 initial=config.doda_enabled,
                 disabled=not bool(assets.resume_ja_id),
                 tooltip="Requires a Japanese resume.",
-            ),
-            Switch(
-                id="scheduled_scan_boss_enabled",
-                label="Enable BOSS",
-                initial=config.boss_enabled,
-                disabled=not bool(assets.resume_zh_id),
-                tooltip="Requires a Chinese resume.",
             ),
             Switch(
                 id="scheduled_scan_feishu_enabled",
@@ -382,6 +376,9 @@ class CareerOpsEvaluationData(BaseModel):
 class CareerOpsEvaluateResponse(BaseModel):
     request_id: str
     data: CareerOpsEvaluationData
+class TranslateJobDescriptionResponse(BaseModel):
+    request_id: str
+    translated_job_description: str
 class CareerOpsScannedOffer(BaseModel):
     title: str
     url: str
@@ -500,6 +497,7 @@ ImproveResumeData.model_rebuild()
 ImproveResumeResponse.model_rebuild()
 CareerOpsEvaluationData.model_rebuild()
 CareerOpsEvaluateResponse.model_rebuild()
+TranslateJobDescriptionResponse.model_rebuild()
 CareerOpsScanData.model_rebuild()
 CareerOpsScanResponse.model_rebuild()
 SeekSearchPlan.model_rebuild()
@@ -630,6 +628,19 @@ class ResumeMatcherBackend:
             )
         response.raise_for_status()
         return CareerOpsEvaluateResponse.model_validate(response.json())
+    async def translate_job_description_to_chinese(
+        self,
+        job_description: str,
+    ) -> str:
+        payload = {"job_description": job_description}
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/api/translate-job-description",
+                json=payload,
+            )
+        response.raise_for_status()
+        result = TranslateJobDescriptionResponse.model_validate(response.json())
+        return result.translated_job_description.strip()
     async def generate_tailored_pdf(
         self,
         resume: dict[str, Any] | str,
@@ -1025,6 +1036,17 @@ class InMemoryTestBackend:
                 },
             }
         )
+    async def translate_job_description_to_chinese(
+        self,
+        job_description: str,
+    ) -> str:
+        if "岗位" in job_description or "职责" in job_description:
+            return job_description
+        return (
+            "岗位职责：根据搜索结果摘要评估岗位匹配度。\n"
+            "任职要求：保留原始技术关键词、公司名称和链接。\n\n"
+            f"原文参考：{job_description}"
+        )
     async def generate_tailored_pdf(
         self,
         resume: dict[str, Any] | str,
@@ -1315,6 +1337,20 @@ def extract_supported_files(elements: list[Any] | None) -> list[Any]:
         if mime_type in SUPPORTED_MIME_TYPES or extension in SUPPORTED_EXTENSIONS:
             supported.append(element)
     return supported
+def should_process_uploaded_resume(
+    *,
+    user_text: str,
+    uploaded_files: list[Any],
+    pending_resume_language: str | None,
+    current_resume_id: str | None,
+) -> bool:
+    if not uploaded_files:
+        return False
+    if pending_resume_language:
+        return True
+    if not current_resume_id:
+        return True
+    return not looks_like_job_description(user_text)
 def is_analysis_request(user_text: str) -> bool:
     normalized = normalize_text(user_text)
     return any(keyword in normalized for keyword in ANALYSIS_KEYWORDS)
@@ -1473,6 +1509,7 @@ def render_scheduled_scan_config(config: ScheduledScanConfig | dict[str, Any]) -
         if isinstance(config, BaseModel)
         else dict(config)
     )
+    payload.pop("boss_enabled", None)
     return yaml.safe_dump(
         payload,
         sort_keys=False,
@@ -1567,6 +1604,7 @@ def format_scheduled_scan_settings(result: ScheduledScanSettingsResponse) -> str
             lines.append(
                 f"- {job.title} | {job.company}{location} | {job.source.upper()} | score `{score}` | status `{job.status}`"
             )
+    lines = [line for line in lines if "BOSS" not in line]
     return "\n".join(lines) + f"\n\n{build_scheduled_scan_results_payload(result)}"
 def build_scheduled_scan_results_payload(result: ScheduledScanSettingsResponse) -> str:
     payload = {
@@ -1686,9 +1724,14 @@ def format_scan_result(result: CareerOpsScanResponse) -> str:
         for error in data.errors[:5]:
             lines.append(f"- {error}")
     return "\n".join(lines)
-def format_seek_search_result(result: SeekSearchResponse) -> str:
+def format_seek_search_result(
+    result: SeekSearchResponse,
+    *,
+    translated_summaries: dict[str, str] | None = None,
+) -> str:
     plan = result.plan
     stats = result.stats
+    translated_summaries = translated_summaries or {}
     source_label = "SEEK" if plan.source == "seek" else plan.source
     grouped_jobs: dict[str, list[SeekSearchJob]] = {}
     for job in result.jobs[:10]:
@@ -1743,8 +1786,9 @@ def format_seek_search_result(result: SeekSearchResponse) -> str:
                 )
                 if extras:
                     lines.append(f"- 标签：`{' | '.join(extras)}`")
-                if job.summary:
-                    lines.append(f"- 摘要：{job.summary}")
+                summary = translated_summaries.get(job.job_id or job.job_url) or job.summary
+                if summary:
+                    lines.append(f"- 摘要：{summary}")
                 lines.append(f"- [打开岗位]({job.job_url})")
                 lines.append("")
     else:
@@ -1966,12 +2010,194 @@ def build_discovered_job_actions(
     return actions
 
 
+def _compact_action_label(value: str, max_length: int = 72) -> str:
+    compact = " ".join(value.split())
+    if len(compact) <= max_length:
+        return compact
+    return f"{compact[: max_length - 3]}..."
+
+
+def build_search_job_actions(jobs: list[SeekSearchJob]) -> list[cl.Action]:
+    actions: list[cl.Action] = []
+    seen_job_keys: set[str] = set()
+    for job in jobs:
+        if len(actions) >= 5:
+            break
+        if not (job.summary or "").strip():
+            continue
+        job_key = job.job_id or job.job_url
+        if not job_key or job_key in seen_job_keys:
+            continue
+        seen_job_keys.add(job_key)
+        label = _compact_action_label(f"分析中文 JD：{job.company} / {job.title}")
+        actions.append(
+            cl.Action(
+                name=ACTION_ANALYZE_SEARCH_JOB,
+                payload={"job_key": job_key},
+                label=label,
+                tooltip="把这条搜索结果翻译成中文 JD，并用于简历匹配分析。",
+            )
+        )
+    return actions
+
+
+def search_job_uses_listing_excerpt(job: SeekSearchJob) -> bool:
+    source = (job.source or "").lower()
+    url = (job.job_url or "").lower()
+    return source == "seek" and "/job/" not in url
+
+
+def build_search_job_description(job: SeekSearchJob) -> str:
+    summary = (job.summary or "").strip()
+    lines = [
+        f"Job title: {job.title}",
+        f"Company: {job.company}",
+        f"Source: {job.source}",
+        f"Location: {job.location}",
+        f"Search keyword: {job.search_keyword}",
+        f"Original URL: {job.job_url}",
+        "",
+        "Responsibilities and requirements excerpt:",
+        summary or "No summary was returned for this search result.",
+    ]
+    if search_job_uses_listing_excerpt(job):
+        lines.extend(
+            [
+                "",
+                (
+                    "Source note: this is a search/listing excerpt returned by web "
+                    "search, not the full original JD. Treat the analysis as a weak "
+                    "signal unless the full posting is pasted later."
+                ),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def format_translated_job_description_display(
+    job: SeekSearchJob,
+    translated_job_description: str,
+    *,
+    translation_failed: bool = False,
+) -> str:
+    source_label = "SEEK" if (job.source or "").lower() == "seek" else job.source
+    lines = [
+        "### 中文 JD",
+        "",
+        f"- 岗位：{job.title}",
+        f"- 公司：{job.company}",
+        f"- 来源：{source_label}",
+        f"- 地点：{job.location or '未提供'}",
+        f"- 搜索关键词：{job.search_keyword}",
+        f"- 匹配分：`{job.match_score:.2f}`",
+        f"- 来源链接：{job.job_url}",
+        "",
+        "#### JD 内容",
+        translated_job_description.strip(),
+    ]
+    if search_job_uses_listing_excerpt(job):
+        lines.extend(
+            [
+                "",
+                "提示：这条 SEEK 结果来自搜索/列表页摘要，不是完整原始 JD。",
+            ]
+        )
+    if translation_failed:
+        lines.extend(
+            [
+                "",
+                "提示：中文翻译暂时失败，下面保留原始 JD 摘要继续分析。",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def format_manual_job_description_display(
+    translated_job_description: str,
+    *,
+    translation_failed: bool = False,
+) -> str:
+    lines = [
+        "### 中文 JD",
+        "",
+        translated_job_description.strip(),
+    ]
+    if translation_failed:
+        lines.extend(
+            [
+                "",
+                "中文翻译暂时失败，先显示原文；后续分析仍使用你提供的原始 JD。",
+            ]
+        )
+    return "\n".join(lines)
+
+
+async def send_chinese_job_description_display(job_description: str) -> None:
+    translation_failed = False
+    try:
+        translated = await backend.translate_job_description_to_chinese(job_description)
+    except Exception:
+        translated = job_description
+        translation_failed = True
+    translated = translated.strip() or job_description
+    await cl.Message(
+        content=format_manual_job_description_display(
+            translated,
+            translation_failed=translation_failed,
+        ),
+        actions=build_tool_actions(),
+    ).send()
+
+
+async def build_translated_search_job_summaries(
+    jobs: list[SeekSearchJob],
+    *,
+    limit: int = 10,
+) -> dict[str, str]:
+    async def translate_job(job: SeekSearchJob) -> tuple[str, str] | None:
+        job_key = job.job_id or job.job_url
+        summary = (job.summary or "").strip()
+        if not job_key or not summary:
+            return None
+        try:
+            translated = await backend.translate_job_description_to_chinese(summary)
+        except Exception:
+            return None
+        translated = translated.strip()
+        if not translated:
+            return None
+        return job_key, translated
+
+    pairs = await asyncio.gather(*(translate_job(job) for job in jobs[:limit]))
+    return {job_key: summary for pair in pairs if pair for job_key, summary in [pair]}
+
+
+def remember_search_result_jobs(jobs: list[SeekSearchJob]) -> None:
+    cached_jobs = {
+        (job.job_id or job.job_url): job.model_dump(mode="json")
+        for job in jobs
+        if (job.job_id or job.job_url) and (job.summary or "").strip()
+    }
+    cl.user_session.set(SESSION_SEARCH_RESULT_JOBS, cached_jobs)
+
+
+def get_remembered_search_job(job_key: str) -> SeekSearchJob | None:
+    cached_jobs = cl.user_session.get(SESSION_SEARCH_RESULT_JOBS) or {}
+    payload = cached_jobs.get(job_key)
+    if not payload:
+        return None
+    try:
+        return SeekSearchJob.model_validate(payload)
+    except Exception:
+        return None
+
+
 def build_mark_applied_action_label(job: DiscoveredJobRecord) -> str:
     return f"标记已投递: {job.company} / {job.title}"
 def build_scheduled_scan_form_actions(
     config: ScheduledScanConfig,
 ) -> list[cl.Action]:
-    return [
+    actions = [
         cl.Action(
             name=ACTION_TOGGLE_SCHEDULED_SCAN_FIELD,
             payload={"field": "enabled", "value": not config.enabled},
@@ -2020,6 +2246,11 @@ def build_scheduled_scan_form_actions(
             label="设置飞书 Webhook",
             tooltip="修改飞书通知 webhook 地址",
         ),
+    ]
+    return [
+        action
+        for action in actions
+        if action.payload.get("field") != "boss_enabled"
     ]
 def build_download_elements(result: ImproveResumeResponse) -> list[cl.File]:
     elements: list[cl.File] = []
@@ -2184,10 +2415,16 @@ async def ensure_resume_available() -> str | None:
     return None
 async def ensure_resume_available_for_language(resume_language: str) -> str | None:
     if resume_language == "en":
-        return await ensure_resume_available()
+        resume_id = await get_resume_id_from_session()
+        if resume_id:
+            return resume_id
     settings = await backend.get_scheduled_scan_settings()
     resume_id = getattr(settings.assets, f"resume_{resume_language}_id", None)
     if resume_id:
+        if resume_language == "en":
+            cl.user_session.set(SESSION_RESUME_ID, resume_id)
+            cl.user_session.set(SESSION_RESUME_STATUS, "ready")
+            await sync_thread_metadata()
         return resume_id
     language_label = get_resume_language_label(resume_language)
     await cl.Message(
@@ -2250,6 +2487,7 @@ async def handle_career_ops_evaluation(user_text: str, resume_id: str) -> None:
         raise ValueError("没有拿到可用于评估的简历内容。")
     progress = cl.Message(content="我正在跑 A-F 职位评估，并补市场信号，请稍等...")
     await progress.send()
+    await send_chinese_job_description_display(user_text)
     await remember_job_description(user_text)
     result = await backend.evaluate_job(resume_content, user_text)
     cl.user_session.set(SESSION_PENDING_ACTION, None)
@@ -2264,14 +2502,19 @@ async def handle_scan_request() -> None:
     progress.actions = build_tool_actions()
     await progress.update()
 async def handle_seek_search_request() -> None:
-    resume_id = await ensure_resume_available()
+    resume_id = await ensure_resume_available_for_language("en")
     if not resume_id:
         return
     progress = cl.Message(content="正在搜索 SEEK 岗位，请稍等...")
     await progress.send()
     result = await backend.search_seek_jobs(resume_id)
-    progress.content = format_seek_search_result(result)
-    progress.actions = build_tool_actions()
+    remember_search_result_jobs(result.jobs)
+    translated_summaries = await build_translated_search_job_summaries(result.jobs)
+    progress.content = format_seek_search_result(
+        result,
+        translated_summaries=translated_summaries,
+    )
+    progress.actions = build_tool_actions() + build_search_job_actions(result.jobs)
     await progress.update()
 async def handle_doda_search_request() -> None:
     resume_id = await ensure_resume_available_for_language("ja")
@@ -2280,9 +2523,52 @@ async def handle_doda_search_request() -> None:
     progress = cl.Message(content="正在搜索 doda 岗位，请稍等...")
     await progress.send()
     result = await backend.search_doda_jobs(resume_id)
-    progress.content = format_seek_search_result(result)
-    progress.actions = build_tool_actions()
+    remember_search_result_jobs(result.jobs)
+    translated_summaries = await build_translated_search_job_summaries(result.jobs)
+    progress.content = format_seek_search_result(
+        result,
+        translated_summaries=translated_summaries,
+    )
+    progress.actions = build_tool_actions() + build_search_job_actions(result.jobs)
     await progress.update()
+async def handle_search_job_analysis_request(job_key: str) -> None:
+    job = get_remembered_search_job(job_key)
+    if not job:
+        await cl.Message(
+            content=(
+                "I cannot find that search result in this chat session anymore. "
+                "Please run the SEEK/doda search again and tap the analysis button there."
+            ),
+            actions=build_tool_actions(),
+        ).send()
+        return
+    resume_language = "ja" if (job.source or "").lower() == "doda" else "en"
+    resume_id = await ensure_resume_available_for_language(resume_language)
+    if not resume_id:
+        return
+    source_job_description = build_search_job_description(job)
+    translation_failed = False
+    try:
+        job_description = await backend.translate_job_description_to_chinese(
+            source_job_description
+        )
+    except Exception:
+        job_description = source_job_description
+        translation_failed = True
+    await cl.Message(
+        content=format_translated_job_description_display(
+            job,
+            job_description,
+            translation_failed=translation_failed,
+        ),
+        actions=build_tool_actions(),
+    ).send()
+    await handle_analysis_request(
+        source_job_description,
+        resume_id,
+        force=True,
+        display_chinese_jd=False,
+    )
 async def handle_view_portals_request() -> None:
     config = await backend.get_portals_config()
     content = (
@@ -2445,8 +2731,14 @@ async def handle_generate_tailored_pdf(
     progress.elements = [build_pdf_download_element(pdf_payload)]
     progress.actions = build_tool_actions()
     await progress.update()
-async def handle_analysis_request(user_text: str, resume_id: str) -> None:
-    if not looks_like_job_description(user_text):
+async def handle_analysis_request(
+    user_text: str,
+    resume_id: str,
+    *,
+    force: bool = False,
+    display_chinese_jd: bool = True,
+) -> None:
+    if not force and not looks_like_job_description(user_text):
         await cl.Message(
             content=(
                 "要做职位匹配分析，我还需要一份更完整的 JD。"
@@ -2461,6 +2753,8 @@ async def handle_analysis_request(user_text: str, resume_id: str) -> None:
         return
     progress = cl.Message(content="我正在分析这份 JD 和你简历的匹配情况，请稍等...")
     await progress.send()
+    if display_chinese_jd:
+        await send_chinese_job_description_display(user_text)
     await remember_job_description(user_text)
     job_id = await backend.upload_job_description(resume_id, user_text)
     result = await backend.preview_resume_improvement(resume_id, job_id)
@@ -2483,6 +2777,7 @@ async def handle_optimization_request(user_text: str, resume_id: str) -> None:
         return
     progress = cl.Message(content="我正在基于这份 JD 生成优化后的简历内容，请稍等...")
     await progress.send()
+    await send_chinese_job_description_display(user_text)
     await remember_job_description(user_text)
     job_id = await backend.upload_job_description(resume_id, user_text)
     result = await backend.improve_resume(resume_id, job_id)
@@ -2512,6 +2807,7 @@ async def on_chat_start() -> None:
     cl.user_session.set(SESSION_LAST_UPLOAD_NAME, None)
     cl.user_session.set(SESSION_LAST_TAILORED_RESUME_ID, None)
     cl.user_session.set(SESSION_LAST_JOB_DESCRIPTION, None)
+    cl.user_session.set(SESSION_SEARCH_RESULT_JOBS, {})
     cl.user_session.set(SESSION_THREAD_NAMED, False)
     cl.user_session.set(SESSION_PENDING_ACTION, None)
     cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, None)
@@ -2598,6 +2894,13 @@ async def on_search_seek_action(_: Any) -> None:
 @cl.action_callback(ACTION_SEARCH_DODA)
 async def on_search_doda_action(_: Any) -> None:
     await handle_doda_search_request()
+@cl.action_callback(ACTION_ANALYZE_SEARCH_JOB)
+async def on_analyze_search_job_action(action: Any) -> None:
+    payload = getattr(action, "payload", {}) or {}
+    job_key = payload.get("job_key")
+    if not job_key:
+        return
+    await handle_search_job_analysis_request(job_key)
 @cl.action_callback(ACTION_VIEW_PORTALS)
 async def on_view_portals_action(_: Any) -> None:
     await handle_view_portals_request()
@@ -2639,6 +2942,7 @@ async def on_delete_current_thread_action(_: Any) -> None:
     await data_layer.delete_thread(thread_id)
     cl.user_session.set(SESSION_LAST_JOB_DESCRIPTION, None)
     cl.user_session.set(SESSION_LAST_TAILORED_RESUME_ID, None)
+    cl.user_session.set(SESSION_SEARCH_RESULT_JOBS, {})
     cl.user_session.set(SESSION_THREAD_NAMED, False)
     cl.user_session.set(SESSION_PENDING_ACTION, None)
     cl.user_session.set(SESSION_PENDING_RESUME_LANGUAGE, None)
@@ -2660,13 +2964,19 @@ async def on_settings_update(settings: dict[str, Any]) -> None:
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     uploaded_files = extract_supported_files(getattr(message, "elements", None))
-    if uploaded_files:
-        resume_language = cl.user_session.get(SESSION_PENDING_RESUME_LANGUAGE) or "en"
+    user_text = (message.content or "").strip()
+    pending_resume_language = cl.user_session.get(SESSION_PENDING_RESUME_LANGUAGE)
+    resume_id = await get_resume_id_from_session()
+    if should_process_uploaded_resume(
+        user_text=user_text,
+        uploaded_files=uploaded_files,
+        pending_resume_language=pending_resume_language,
+        current_resume_id=resume_id,
+    ):
+        resume_language = pending_resume_language or "en"
         await process_resume_upload(uploaded_files[0], resume_language=resume_language)
         return
 
-    resume_id = await get_resume_id_from_session()
-    user_text = (message.content or "").strip()
     if not user_text:
         await cl.Message(
             content="You can paste a JD directly, or tell me what you want me to do next.",

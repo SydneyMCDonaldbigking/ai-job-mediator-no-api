@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.tavily"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
     frontend_base_url: str = "http://localhost:3000"
+    job_search_fallback_provider: Literal["auto", "disabled", "brave", "tavily"] = "auto"
+    brave_search_api_key: str = ""
+    tavily_api_key: str = ""
+    tavily_search_depth: Literal["basic", "advanced", "fast", "ultra-fast"] = "basic"
+    job_search_fallback_count: int = 8
 
     @field_validator("log_level", mode="before")
     @classmethod

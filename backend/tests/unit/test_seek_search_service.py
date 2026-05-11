@@ -47,6 +47,7 @@ dedupe_seek_jobs = seek_search_module.dedupe_seek_jobs
 parse_seek_list_html = seek_search_module.parse_seek_list_html
 run_manual_seek_search = seek_search_module.run_manual_seek_search
 score_seek_job = seek_search_module.score_seek_job
+build_seek_search_url = seek_search_module.build_seek_search_url
 
 
 @pytest.fixture
@@ -99,6 +100,12 @@ async def test_build_seek_search_plan_uses_ai_generated_queries(
     assert plan.location == "Brisbane QLD"
     assert plan.candidate_profile_summary == "AI generated profile"
     assert plan.keywords == ["ml engineer", "data platform engineer"]
+
+
+def test_build_seek_search_url_uses_current_keyword_location_route():
+    url = build_seek_search_url(keyword="python backend engineer", location="Sydney NSW")
+
+    assert url == "https://www.seek.com.au/python-backend-engineer-jobs/in-Sydney-NSW"
 
 
 @pytest.mark.anyio
@@ -227,6 +234,57 @@ async def test_run_manual_seek_search_scrapes_keywords_concurrently(
     assert response.stats.queries_succeeded == 2
 
 
+@pytest.mark.anyio
+async def test_run_manual_seek_search_uses_search_fallback_when_direct_scrape_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        seek_search_module.db,
+        "get_resume",
+        lambda resume_id: {
+            "processed_data": {
+                "summary": "Senior backend engineer building Python APIs.",
+                "workExperience": [],
+                "additional": {"technicalSkills": ["Python", "FastAPI"]},
+            }
+        },
+    )
+
+    async def fake_generate_search_queries(*, resume, language, default_location):
+        return GeneratedSearchQueries(
+            candidate_profile_summary="profile",
+            keywords=["python backend engineer"],
+            location=default_location,
+        )
+
+    async def blocked_scrape(*, keyword: str, location: str):
+        raise RuntimeError("SEEK returned HTTP 403")
+
+    async def fake_search_fallback(*, source: str, keyword: str, location: str):
+        assert source == "seek"
+        assert keyword == "python backend engineer"
+        return [
+            SeekRawJob(
+                search_keyword=keyword,
+                title="Senior Backend Engineer",
+                company="Example",
+                location=location,
+                job_url="https://www.seek.com.au/job/123456",
+            )
+        ]
+
+    monkeypatch.setattr(seek_search_module, "generate_search_queries", fake_generate_search_queries)
+    monkeypatch.setattr(seek_search_module, "scrape_seek_search_results", blocked_scrape)
+    monkeypatch.setattr(seek_search_module, "is_search_fallback_configured", lambda: True)
+    monkeypatch.setattr(seek_search_module, "search_jobs_via_fallback", fake_search_fallback)
+
+    response = await run_manual_seek_search(resume_id="resume-1")
+
+    assert response.stats.queries_succeeded == 1
+    assert response.errors == []
+    assert response.jobs[0].job_url == "https://www.seek.com.au/job/123456"
+
+
 def test_dedupe_seek_jobs_prefers_unique_job_url():
     jobs = [
         SeekRawJob(
@@ -288,3 +346,61 @@ def test_parse_seek_list_html_extracts_job_cards():
     assert jobs[0].title == "Senior Backend Engineer"
     assert jobs[0].company == "Example Co"
     assert jobs[0].job_url.startswith("https://www.seek.com.au/job/")
+
+
+def test_parse_seek_detail_html_extracts_json_ld_description():
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "description": "<p>Build backend APIs.</p><ul><li>Use Python and FastAPI.</li></ul>"
+          }
+        </script>
+      </head>
+      <body></body>
+    </html>
+    """
+
+    detail = seek_search_module.parse_seek_detail_html(html)
+
+    assert detail is not None
+    assert "Build backend APIs." in detail
+    assert "Use Python and FastAPI." in detail
+    assert "<p>" not in detail
+
+
+@pytest.mark.anyio
+async def test_enrich_seek_jobs_with_details_prefers_full_detail_for_job_urls(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fake_scrape_detail(url: str):
+        assert url == "https://www.seek.com.au/job/123"
+        return "Full JD: build Python APIs, own AWS platform services, and mentor engineers."
+
+    monkeypatch.setattr(seek_search_module, "scrape_seek_job_detail", fake_scrape_detail)
+    jobs = [
+        SeekRawJob(
+            search_keyword="python backend engineer",
+            title="Senior Backend Engineer",
+            company="Example Co",
+            location="Sydney NSW",
+            job_url="https://www.seek.com.au/job/123",
+            summary="Short snippet.",
+        ),
+        SeekRawJob(
+            search_keyword="python backend engineer",
+            title="Backend Developer Jobs",
+            company="SEEK",
+            location="Sydney NSW",
+            job_url="https://www.seek.com.au/backend-developer-jobs/in-Sydney-NSW",
+            summary="Listing page snippet.",
+        ),
+    ]
+
+    enriched = await seek_search_module.enrich_seek_jobs_with_details(jobs, detail_limit=5)
+
+    assert enriched[0].summary.startswith("Full JD:")
+    assert enriched[1].summary == "Listing page snippet."

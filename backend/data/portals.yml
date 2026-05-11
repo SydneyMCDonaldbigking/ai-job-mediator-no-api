@@ -1,0 +1,36 @@
+title_filter:
+  positive:
+    - AI
+    - LLM
+    - Agentic
+    - Platform Engineer
+    - Solutions Architect
+    - Product Manager
+  negative:
+    - Junior
+    - Intern
+    - iOS
+    - Android
+  seniority_boost:
+    - Senior
+    - Staff
+    - Principal
+
+search_queries: []
+
+tracked_companies:
+  - name: Anthropic
+    careers_url: https://job-boards.greenhouse.io/anthropic
+    api: https://boards-api.greenhouse.io/v1/boards/anthropic/jobs
+    enabled: true
+    notes: Frontier model company with Greenhouse board.
+
+  - name: Cohere
+    careers_url: https://jobs.ashbyhq.com/cohere
+    enabled: true
+    notes: Ashby board example.
+
+  - name: Palantir
+    careers_url: https://jobs.lever.co/palantir
+    enabled: true
+    notes: Lever board example.

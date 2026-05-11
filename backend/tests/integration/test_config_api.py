@@ -22,7 +22,7 @@ class TestLlmConfig:
         mock_load.return_value = {
             "provider": "openai",
             "model": "gpt-4",
-            "api_key": "test-api-key",
+            "api_key": "sk-1234567890abcdef",
             "api_base": None,
         }
         async with client:
@@ -53,7 +53,7 @@ class TestLlmTest:
     @patch("app.routers.config.check_llm_health", new_callable=AsyncMock)
     @patch("app.routers.config._load_config")
     async def test_connection_test_success(self, mock_load, mock_health, client):
-        mock_load.return_value = {"provider": "openai", "model": "gpt-4", "api_key": "test-api-key"}
+        mock_load.return_value = {"provider": "openai", "model": "gpt-4", "api_key": "sk-test"}
         mock_health.return_value = {
             "healthy": True,
             "provider": "openai",

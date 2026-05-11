@@ -8,11 +8,14 @@ from fastapi.responses import Response
 from app.career_ops.evaluator import evaluate_job_fit
 from app.career_ops.pdf_generator import CareerOpsPDFError, generate_tailored_resume_pdf
 from app.career_ops.scanner import scan_portals
+from app.career_ops.translator import translate_job_description_to_chinese
 from app.schemas import (
     CareerOpsEvaluateRequest,
     CareerOpsEvaluateResponse,
     CareerOpsScanResponse,
     GenerateTailoredPDFRequest,
+    TranslateJobDescriptionRequest,
+    TranslateJobDescriptionResponse,
 )
 
 router = APIRouter(tags=["CareerOps"])
@@ -39,6 +42,32 @@ async def evaluate_job_endpoint(
     return CareerOpsEvaluateResponse(
         request_id=str(uuid4()),
         data=result,
+    )
+
+
+@router.post(
+    "/translate-job-description",
+    response_model=TranslateJobDescriptionResponse,
+)
+async def translate_job_description_endpoint(
+    request: TranslateJobDescriptionRequest,
+) -> TranslateJobDescriptionResponse:
+    """Translate a JD into Simplified Chinese for frontend display."""
+    try:
+        translated = await translate_job_description_to_chinese(
+            request.job_description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to translate the job description.",
+        ) from exc
+
+    return TranslateJobDescriptionResponse(
+        request_id=str(uuid4()),
+        translated_job_description=translated,
     )
 
 

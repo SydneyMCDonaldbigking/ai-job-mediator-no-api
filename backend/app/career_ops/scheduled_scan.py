@@ -52,7 +52,9 @@ def load_scheduled_scan_config() -> dict[str, Any]:
 
 def save_scheduled_scan_config(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = ScheduledScanConfig.model_validate(payload)
-    return db.save_scheduled_scan_config(normalized.model_dump())
+    data = normalized.model_dump()
+    data["boss_enabled"] = False
+    return db.save_scheduled_scan_config(data)
 
 
 def list_recent_new_jobs(limit: int = 10) -> list[dict[str, Any]]:
@@ -81,8 +83,6 @@ def get_enabled_sources(
         sources.append("seek")
     if config.get("doda_enabled") and assets.resume_ja_id:
         sources.append("doda")
-    if config.get("boss_enabled") and assets.resume_zh_id:
-        sources.append("boss")
     return sources
 
 

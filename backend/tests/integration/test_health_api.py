@@ -53,7 +53,7 @@ class TestStatusEndpoint:
     @patch("app.routers.health.check_llm_health", new_callable=AsyncMock)
     @patch("app.routers.health.get_llm_config")
     async def test_status_ready(self, mock_config, mock_health, mock_db, client):
-        mock_config.return_value = type("C", (), {"api_key": "test-api-key", "provider": "openai"})()
+        mock_config.return_value = type("C", (), {"api_key": "sk-test", "provider": "openai"})()
         mock_health.return_value = {"healthy": True}
         mock_db.get_stats.return_value = {
             "total_resumes": 1,

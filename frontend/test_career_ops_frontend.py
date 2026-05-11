@@ -305,6 +305,130 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertIn("匹配等级：`高`", message)
         self.assertIn("[打开岗位](https://www.seek.com.au/job/123)", message)
 
+    def test_format_seek_search_result_can_display_translated_summary(self):
+        frontend_app = load_frontend_app_module()
+        result = frontend_app.SeekSearchResponse.model_validate(
+            {
+                "plan": {
+                    "resume_id": "resume-1",
+                    "source": "seek",
+                    "candidate_profile_summary": "Python backend engineer",
+                    "keywords": ["python backend engineer"],
+                    "location": "Sydney NSW",
+                },
+                "jobs": [
+                    {
+                        "job_id": "seek:https://www.seek.com.au/job/123",
+                        "source": "seek",
+                        "search_keyword": "python backend engineer",
+                        "title": "Senior Backend Engineer",
+                        "company": "Example Co",
+                        "location": "Sydney NSW",
+                        "job_url": "https://www.seek.com.au/job/123",
+                        "summary": "Responsibilities: build APIs.",
+                        "match_score": 0.91,
+                    }
+                ],
+                "stats": {
+                    "keywords_generated": 1,
+                    "queries_attempted": 1,
+                    "queries_succeeded": 1,
+                    "raw_jobs_found": 1,
+                    "jobs_after_dedupe": 1,
+                },
+                "errors": [],
+            }
+        )
+
+        message = frontend_app.format_seek_search_result(
+            result,
+            translated_summaries={
+                "seek:https://www.seek.com.au/job/123": "岗位职责：构建 API。"
+            },
+        )
+
+        self.assertIn("岗位职责：构建 API。", message)
+        self.assertNotIn("Responsibilities: build APIs.", message)
+
+    def test_build_search_job_actions_creates_jd_analysis_buttons(self):
+        frontend_app = load_frontend_app_module()
+
+        actions = frontend_app.build_search_job_actions(
+            [
+                frontend_app.SeekSearchJob.model_validate(
+                    {
+                        "job_id": "seek:https://www.seek.com.au/job/123",
+                        "source": "seek",
+                        "search_keyword": "python backend engineer",
+                        "title": "Senior Backend Engineer",
+                        "company": "Example Co",
+                        "location": "Sydney NSW",
+                        "job_url": "https://www.seek.com.au/job/123",
+                        "summary": "Responsibilities: build APIs. Requirements: Python.",
+                        "match_score": 0.91,
+                    }
+                )
+            ]
+        )
+
+        self.assertEqual(actions[0].name, frontend_app.ACTION_ANALYZE_SEARCH_JOB)
+        self.assertEqual(
+            actions[0].payload["job_key"],
+            "seek:https://www.seek.com.au/job/123",
+        )
+        self.assertIn("JD", actions[0].label)
+        self.assertIn("分析", actions[0].label)
+
+    def test_build_search_job_description_marks_seek_listing_as_excerpt(self):
+        frontend_app = load_frontend_app_module()
+
+        description = frontend_app.build_search_job_description(
+            frontend_app.SeekSearchJob.model_validate(
+                {
+                    "job_id": "seek:https://www.seek.com.au/backend-developer-jobs/in-Sydney-NSW",
+                    "source": "seek",
+                    "search_keyword": "backend developer",
+                    "title": "Backend Developer Jobs",
+                    "company": "SEEK",
+                    "location": "Sydney NSW",
+                    "job_url": "https://www.seek.com.au/backend-developer-jobs/in-Sydney-NSW",
+                    "summary": "Backend developer openings mentioning Python and APIs.",
+                    "match_score": 0.67,
+                }
+            )
+        )
+
+        self.assertIn("Backend Developer Jobs", description)
+        self.assertIn("Backend developer openings mentioning Python and APIs.", description)
+        self.assertIn("https://www.seek.com.au/backend-developer-jobs/in-Sydney-NSW", description)
+        self.assertIn("search/listing excerpt", description)
+
+    def test_format_translated_job_description_display_uses_chinese_metadata(self):
+        frontend_app = load_frontend_app_module()
+
+        message = frontend_app.format_translated_job_description_display(
+            frontend_app.SeekSearchJob.model_validate(
+                {
+                    "job_id": "seek:https://www.seek.com.au/backend-developer-jobs/in-Sydney-NSW",
+                    "source": "seek",
+                    "search_keyword": "backend developer",
+                    "title": "Backend Developer Jobs",
+                    "company": "SEEK",
+                    "location": "Sydney NSW",
+                    "job_url": "https://www.seek.com.au/backend-developer-jobs/in-Sydney-NSW",
+                    "summary": "Backend developer openings mentioning Python and APIs.",
+                    "match_score": 0.67,
+                }
+            ),
+            "岗位职责：构建 API。任职要求：Python。",
+        )
+
+        self.assertIn("### 中文 JD", message)
+        self.assertIn("岗位：Backend Developer Jobs", message)
+        self.assertIn("公司：SEEK", message)
+        self.assertIn("岗位职责：构建 API。任职要求：Python。", message)
+        self.assertIn("搜索/列表页摘要", message)
+
     def test_format_seek_search_result_preserves_doda_source_label(self):
         frontend_app = load_frontend_app_module()
 
@@ -531,9 +655,12 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         )
 
         labels = [action.label for action in actions]
+        fields = [action.payload.get("field") for action in actions]
         self.assertIn("设置时间", labels)
         self.assertIn("设置阈值", labels)
         self.assertIn("设置飞书 Webhook", labels)
+
+        self.assertNotIn("boss_enabled", fields)
 
     def test_build_scheduled_scan_chat_settings_contains_visual_inputs(self):
         frontend_app = load_frontend_app_module()
@@ -566,9 +693,26 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertEqual(inputs[4].id, "scheduled_scan_seek_enabled")
         self.assertFalse(inputs[4].disabled)
         self.assertTrue(inputs[5].disabled)
-        self.assertTrue(inputs[6].disabled)
-        self.assertEqual(inputs[7].id, "scheduled_scan_feishu_enabled")
-        self.assertEqual(inputs[8].id, "scheduled_scan_feishu_webhook_url")
+        self.assertEqual(inputs[6].id, "scheduled_scan_feishu_enabled")
+        self.assertEqual(inputs[7].id, "scheduled_scan_feishu_webhook_url")
+        self.assertNotIn(
+            "scheduled_scan_boss_enabled",
+            [input_item.id for input_item in inputs],
+        )
+
+    def test_render_scheduled_scan_config_hides_unsupported_boss_field(self):
+        frontend_app = load_frontend_app_module()
+
+        rendered = frontend_app.render_scheduled_scan_config(
+            frontend_app.ScheduledScanConfig(
+                enabled=True,
+                seek_enabled=True,
+                doda_enabled=False,
+                boss_enabled=True,
+            )
+        )
+
+        self.assertNotIn("boss_enabled", rendered)
 
     def test_build_resume_assets_panel_payload_marks_existing_and_missing_resumes(self):
         frontend_app = load_frontend_app_module()
@@ -631,7 +775,7 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
                 "scheduled_scan_high_score_threshold": 0.9,
                 "scheduled_scan_seek_enabled": True,
                 "scheduled_scan_doda_enabled": False,
-                "scheduled_scan_boss_enabled": False,
+                "scheduled_scan_boss_enabled": True,
                 "scheduled_scan_feishu_enabled": True,
                 "scheduled_scan_feishu_webhook_url": "none",
             }
@@ -640,6 +784,7 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
         self.assertEqual(normalized["run_time_local"], "21:30")
         self.assertEqual(normalized["high_score_threshold"], 0.9)
         self.assertIsNone(normalized["feishu_webhook_url"])
+        self.assertNotIn("boss_enabled", normalized)
 
 
 class CareerOpsFrontendBackendClientTests(unittest.IsolatedAsyncioTestCase):
@@ -682,6 +827,37 @@ class CareerOpsFrontendBackendClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((method, url), ("POST", "http://backend/api/evaluate-job"))
         self.assertEqual(kwargs["json"]["resume"], "resume text")
         self.assertEqual(kwargs["json"]["job_description"], "job description")
+
+    async def test_translate_job_description_to_chinese_posts_jd(self):
+        RecordingAsyncClient.responses = {
+            (
+                "POST",
+                "http://backend/api/translate-job-description",
+            ): MockHTTPResponse(
+                {
+                    "request_id": "translate-1",
+                    "translated_job_description": "岗位职责：构建 API。任职要求：Python。",
+                }
+            )
+        }
+
+        with patch.object(self.frontend_app.httpx, "AsyncClient", RecordingAsyncClient):
+            translated = await self.frontend_app.ResumeMatcherBackend(
+                "http://backend"
+            ).translate_job_description_to_chinese(
+                "Responsibilities: Build APIs. Requirements: Python."
+            )
+
+        self.assertEqual(translated, "岗位职责：构建 API。任职要求：Python。")
+        method, url, kwargs = RecordingAsyncClient.requests[0]
+        self.assertEqual(
+            (method, url),
+            ("POST", "http://backend/api/translate-job-description"),
+        )
+        self.assertEqual(
+            kwargs["json"]["job_description"],
+            "Responsibilities: Build APIs. Requirements: Python.",
+        )
 
     async def test_scan_jobs_calls_scan_endpoint(self):
         RecordingAsyncClient.responses = {

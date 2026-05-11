@@ -75,6 +75,8 @@ from app.schemas.models import (
     SectionType,
     StatusResponse,
     TailoredPDFResult,
+    TranslateJobDescriptionRequest,
+    TranslateJobDescriptionResponse,
     UpdateCoverLetterRequest,
     UpdateOutreachMessageRequest,
     UpdateTitleRequest,
@@ -156,6 +158,8 @@ __all__ = [
     "GenerateContentResponse",
     "GenerateTailoredPDFRequest",
     "TailoredPDFResult",
+    "TranslateJobDescriptionRequest",
+    "TranslateJobDescriptionResponse",
     "HealthResponse",
     "StatusResponse",
 ]
