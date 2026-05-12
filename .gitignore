@@ -129,6 +129,12 @@ config.json
 .tmp/
 pytest-cache-files-*/
 *.log
+backend/data/scan-history.tsv
+backend/data/test-*.tsv
+backend/data/test-*.yml
+frontend/data/users.json
+frontend/data/chats/
+frontend/public/chat-assets/
 frontend/.files/
 frontend/.logs/
 frontend/.tmp-tests/
