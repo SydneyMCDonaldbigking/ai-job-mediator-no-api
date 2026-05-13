@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import unittest
 import uuid
@@ -398,7 +399,7 @@ class RealBackendSmokeTests(unittest.TestCase):
         with self.backend_log_path.open("w", encoding="utf-8") as backend_log:
             self.backend_process = subprocess.Popen(
                 [
-                    "python",
+                    sys.executable,
                     str(BACKEND_RUNNER),
                     "--port",
                     str(backend_port),
@@ -415,6 +416,8 @@ class RealBackendSmokeTests(unittest.TestCase):
         with self.frontend_log_path.open("w", encoding="utf-8") as frontend_log:
             self.frontend_process = subprocess.Popen(
                 [
+                    sys.executable,
+                    "-m",
                     "chainlit",
                     "run",
                     "app.py",
@@ -520,7 +523,7 @@ class RealBackendSmokeTests(unittest.TestCase):
         with self.backend_log_path.open("w", encoding="utf-8") as backend_log:
             self.backend_process = subprocess.Popen(
                 [
-                    "python",
+                    sys.executable,
                     str(BACKEND_RUNNER),
                     "--port",
                     str(backend_port),
@@ -537,6 +540,8 @@ class RealBackendSmokeTests(unittest.TestCase):
         with self.frontend_log_path.open("w", encoding="utf-8") as frontend_log:
             self.frontend_process = subprocess.Popen(
                 [
+                    sys.executable,
+                    "-m",
                     "chainlit",
                     "run",
                     "app.py",
@@ -605,7 +610,7 @@ class RealBackendSmokeTests(unittest.TestCase):
                 click_latest_enabled_action(page, ACTION_SEARCH_SEEK)
                 page.get_by_text("SEEK \u641c\u7d22\u9762\u677f", exact=False).wait_for(timeout=30000)
                 page.get_by_text("\u804c\u4f4d\u5361\u7247", exact=False).wait_for(timeout=30000)
-                page.get_by_text("Example Co", exact=False).wait_for(timeout=30000)
+                page.get_by_text("Example Co", exact=True).wait_for(timeout=30000)
 
                 click_latest_enabled_action(page, ACTION_VIEW_PORTALS)
                 page.get_by_text("Portals \u914d\u7f6e\u5df2\u5c31\u7eea", exact=False).wait_for(timeout=20000)
@@ -636,7 +641,7 @@ class RealBackendSmokeTests(unittest.TestCase):
                     page,
                     "enabled: true\nrun_time_local: '21:30'\ntimezone: Australia/Sydney\nseek_enabled: true\ndoda_enabled: false\nboss_enabled: false",
                 )
-                page.get_by_text("21:30", exact=False).wait_for(timeout=20000)
+                page.get_by_text("21:30", exact=True).wait_for(timeout=20000)
 
                 scheduled_payload = wait_for_scheduled_scan_time(backend_url, "21:30")
                 self.assertEqual(
