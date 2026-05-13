@@ -1229,11 +1229,13 @@ class InMemoryTestBackend:
 def ensure_runtime_assets() -> None:
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
     auto_login_js = PUBLIC_DIR / "auto-login.js"
+    source_auto_login_js = APP_DIR / "public" / "auto-login.js"
+    if auto_login_js.resolve() == source_auto_login_js.resolve():
+        return
     if not AUTO_LOGIN_ENABLED:
         if auto_login_js.exists():
             auto_login_js.unlink()
         return
-    source_auto_login_js = APP_DIR / "public" / "auto-login.js"
     script = source_auto_login_js.read_text(encoding="utf-8")
     script = script.replace('"local-user"', json.dumps(APP_USERNAME), 1)
     script = script.replace('"job-mediator-123"', json.dumps(APP_PASSWORD), 1)

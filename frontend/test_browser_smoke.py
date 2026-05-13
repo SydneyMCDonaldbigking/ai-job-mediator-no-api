@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import unittest
 import uuid
@@ -381,6 +382,8 @@ class BrowserSmokeTests(unittest.TestCase):
         with self.log_path.open("w", encoding="utf-8") as log_file:
             self.process = subprocess.Popen(
                 [
+                    sys.executable,
+                    "-m",
                     "chainlit",
                     "run",
                     "app.py",

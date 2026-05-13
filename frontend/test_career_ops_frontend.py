@@ -92,6 +92,28 @@ class CareerOpsFrontendFormattingTests(unittest.TestCase):
 
         shutil.rmtree(temp_root, ignore_errors=True)
 
+    def test_default_public_dir_does_not_rewrite_auto_login_template(self):
+        auto_login_template = FRONTEND_DIR / "public" / "auto-login.js"
+        original_script = auto_login_template.read_text(encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {
+                "CHAINLIT_APP_USERNAME": "custom-user@example.com",
+                "CHAINLIT_APP_PASSWORD": "super-secret-password",
+            },
+            clear=False,
+        ):
+            frontend_app = load_frontend_app_module()
+
+        self.assertEqual(frontend_app.PUBLIC_DIR, FRONTEND_DIR / "public")
+        self.assertEqual(
+            auto_login_template.read_text(encoding="utf-8"),
+            original_script,
+        )
+        self.assertNotIn("custom-user@example.com", original_script)
+        self.assertNotIn("super-secret-password", original_script)
+
     def test_build_tool_actions_include_resume_and_pdf_controls(self):
         frontend_app = load_frontend_app_module()
 
