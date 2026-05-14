@@ -258,21 +258,81 @@ def resolve_api_key(stored: dict, provider: str) -> str:
     return api_key
 
 
+def build_llm_config_chain(stored: dict[str, Any] | None = None) -> list[LLMConfig]:
+    """Build an ordered list of LLM configs from stored config.
+
+    Uses ``llm_fallback_chain`` when present, otherwise falls back to the legacy
+    single-provider configuration.
+    """
+    stored = stored or _load_stored_config()
+    entries = stored.get("llm_fallback_chain") or []
+    api_keys = stored.get("api_keys", {})
+    if not isinstance(api_keys, dict):
+        api_keys = {}
+
+    configs: list[LLMConfig] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("enabled", True) is False:
+                continue
+
+            provider = str(entry.get("provider") or "").strip()
+            model = str(entry.get("model") or "").strip()
+            api_key_provider = str(entry.get("api_key_provider") or provider).strip()
+            if not provider or not model:
+                continue
+
+            api_key = api_keys.get(_PROVIDER_KEY_MAP.get(api_key_provider, api_key_provider), "")
+            configs.append(
+                LLMConfig(
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    api_base=entry.get("api_base"),
+                )
+            )
+
+    if configs:
+        return configs
+
+    provider = stored.get("provider", settings.llm_provider)
+    return [
+        LLMConfig(
+            provider=provider,
+            model=stored.get("model", settings.llm_model),
+            api_key=resolve_api_key(stored, provider),
+            api_base=stored.get("api_base", settings.llm_api_base),
+        )
+    ]
+
+
+def is_fallback_eligible_error(exc: Exception) -> bool:
+    """Return whether an exception should trigger provider fallback."""
+    message = str(exc).lower()
+    markers = (
+        "401",
+        "403",
+        "429",
+        "quota",
+        "credit",
+        "credits",
+        "insufficient",
+        "forbidden",
+        "rate limit",
+        "free",
+    )
+    return any(marker in message for marker in markers)
+
+
 def get_llm_config() -> LLMConfig:
     """Get current LLM configuration.
 
     Priority for api_key: top-level api_key > api_keys[provider] > env/settings
     """
     stored = _load_stored_config()
-    provider = stored.get("provider", settings.llm_provider)
-    api_key = resolve_api_key(stored, provider)
-
-    return LLMConfig(
-        provider=provider,
-        model=stored.get("model", settings.llm_model),
-        api_key=api_key,
-        api_base=stored.get("api_base", settings.llm_api_base),
-    )
+    return build_llm_config_chain(stored)[0]
 
 
 def get_model_name(config: LLMConfig) -> str:
@@ -418,8 +478,47 @@ async def check_llm_health(
     *,
     include_details: bool = False,
     test_prompt: str | None = None,
+    fallback_chain: list[LLMConfig] | None = None,
 ) -> dict[str, Any]:
     """Check if the LLM provider is accessible and working."""
+    if config is None:
+        config = get_llm_config()
+
+    candidates = fallback_chain or [config]
+    last_result: dict[str, Any] | None = None
+
+    for index, candidate in enumerate(candidates):
+        result = await _check_llm_health_once(
+            candidate,
+            include_details=include_details,
+            test_prompt=test_prompt,
+        )
+        if result.get("healthy", False):
+            return result
+
+        last_result = result
+        if index >= len(candidates) - 1:
+            break
+        if result.get("error_code") == "api_key_missing":
+            continue
+        if not is_fallback_eligible_error(Exception(result.get("message") or result.get("error_code") or "")):
+            break
+
+    return last_result or {
+        "healthy": False,
+        "provider": config.provider,
+        "model": config.model,
+        "error_code": "health_check_failed",
+    }
+
+
+async def _check_llm_health_once(
+    config: LLMConfig | None = None,
+    *,
+    include_details: bool = False,
+    test_prompt: str | None = None,
+) -> dict[str, Any]:
+    """Check if a single LLM provider config is accessible and working."""
     if config is None:
         config = get_llm_config()
 
@@ -463,6 +562,7 @@ async def check_llm_health(
                 last_error = exc
                 if (
                     attempt >= LLM_HEALTH_CHECK_RETRIES
+                    or is_fallback_eligible_error(exc)
                     or not _is_transient_health_check_error(str(exc))
                 ):
                     raise
@@ -527,6 +627,7 @@ async def check_llm_health(
             "provider": config.provider,
             "model": config.model,
             "error_code": error_code,
+            "message": message,
         }
         if include_details:
             result["test_prompt"] = _to_code_block(prompt)
@@ -546,45 +647,53 @@ async def complete(
 
     Transport retries (429, 500, timeout) are handled by the Router.
     """
-    router, config = get_router(config)
-    model_name = get_model_name(config)
+    runtime_configs = [config] if config is not None else build_llm_config_chain()
 
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    try:
-        kwargs: dict[str, Any] = {
-            "model": "primary",
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "timeout": LLM_TIMEOUT_COMPLETION,
-        }
-        if _supports_temperature(config.provider, model_name):
-            kwargs["temperature"] = temperature
-        reasoning_effort = _get_reasoning_effort(config.provider, model_name)
-        if reasoning_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
+    last_error: Exception | None = None
+    for index, runtime_config in enumerate(runtime_configs):
+        router, runtime_config = get_router(runtime_config)
+        model_name = get_model_name(runtime_config)
 
-        response = await router.acompletion(**kwargs)
+        try:
+            kwargs: dict[str, Any] = {
+                "model": "primary",
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "timeout": LLM_TIMEOUT_COMPLETION,
+            }
+            if _supports_temperature(runtime_config.provider, model_name):
+                kwargs["temperature"] = temperature
+            reasoning_effort = _get_reasoning_effort(runtime_config.provider, model_name)
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
 
-        content = _extract_choice_text(response.choices[0])
-        if not content:
-            raise ValueError("Empty response from LLM")
-        # Strip thinking tags from reasoning models (deepseek-r1, qwq, etc.)
-        if "<think>" in content:
-            content = _strip_thinking_tags(content)
+            response = await router.acompletion(**kwargs)
+
+            content = _extract_choice_text(response.choices[0])
             if not content:
-                raise ValueError("Response contained only thinking content, no output")
-        return content
-    except Exception as e:
-        # Log the actual error server-side for debugging
-        logging.error(f"LLM completion failed: {e}", extra={
-                      "model": model_name})
-        raise ValueError(
-            "LLM completion failed. Please check your API configuration and try again."
-        ) from e
+                raise ValueError("Empty response from LLM")
+            if "<think>" in content:
+                content = _strip_thinking_tags(content)
+                if not content:
+                    raise ValueError("Response contained only thinking content, no output")
+            return content
+        except Exception as e:
+            last_error = e
+            logging.error(
+                f"LLM completion failed: {e}",
+                extra={"model": model_name, "provider": runtime_config.provider},
+            )
+            if index >= len(runtime_configs) - 1 or not is_fallback_eligible_error(e):
+                break
+
+    raise ValueError(
+        "LLM completion failed. Please check your API configuration and try again."
+    ) from last_error
 
 
 def _supports_json_mode(model_name: str) -> bool:
@@ -797,6 +906,16 @@ async def complete_json(
     issues (malformed JSON, truncation).  Transport retries (429, 500, timeout)
     are handled by the Router and are NOT retried again here.
     """
+    runtime_configs = [config] if config is not None else build_llm_config_chain()
+    if len(runtime_configs) > 1:
+        return await _complete_json_with_fallback_chain(
+            prompt,
+            system_prompt=system_prompt,
+            runtime_configs=runtime_configs,
+            max_tokens=max_tokens,
+            retries=retries,
+        )
+
     router, config = get_router(config)
     model_name = get_model_name(config)
 
@@ -890,3 +1009,89 @@ async def complete_json(
             raise
 
     raise ValueError(f"Failed after {retries + 1} attempts")
+
+
+async def _complete_json_with_fallback_chain(
+    prompt: str,
+    *,
+    system_prompt: str | None,
+    runtime_configs: list[LLMConfig],
+    max_tokens: int,
+    retries: int,
+) -> dict[str, Any]:
+    """Run JSON completion across an ordered provider chain."""
+    json_system = (
+        system_prompt or ""
+    ) + "\n\nYou must respond with valid JSON only. No explanations, no markdown."
+    last_error: Exception | None = None
+
+    for config_index, runtime_config in enumerate(runtime_configs):
+        router, runtime_config = get_router(runtime_config)
+        model_name = get_model_name(runtime_config)
+        use_json_mode = _supports_json_mode(model_name)
+        messages = [
+            {"role": "system", "content": json_system},
+            {"role": "user", "content": prompt},
+        ]
+
+        for attempt in range(retries + 1):
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": "primary",
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "timeout": _calculate_timeout("json", max_tokens, runtime_config.provider),
+                }
+                if _supports_temperature(runtime_config.provider, model_name):
+                    kwargs["temperature"] = _get_retry_temperature(attempt)
+                reasoning_effort = _get_reasoning_effort(runtime_config.provider, model_name)
+                if reasoning_effort:
+                    kwargs["reasoning_effort"] = reasoning_effort
+
+                if use_json_mode:
+                    kwargs["response_format"] = {"type": "json_object"}
+
+                response = await router.acompletion(**kwargs)
+                content = _extract_choice_text(response.choices[0])
+                if not content:
+                    raise ValueError("Empty response from LLM")
+
+                json_str = _extract_json(content)
+                result = json.loads(json_str)
+
+                if isinstance(result, dict) and _appears_truncated(result):
+                    if attempt < retries:
+                        messages[-1]["content"] = (
+                            prompt
+                            + "\n\nIMPORTANT: Output the COMPLETE JSON object with ALL sections including personalInfo. Do not truncate."
+                        )
+                        continue
+
+                return result
+
+            except json.JSONDecodeError as e:
+                last_error = e
+                if attempt < retries:
+                    messages[-1]["content"] = (
+                        prompt
+                        + "\n\nIMPORTANT: Output ONLY a valid JSON object. Start with { and end with }."
+                    )
+                    continue
+                break
+
+            except ValueError as e:
+                last_error = e
+                if attempt < retries:
+                    continue
+                break
+
+            except Exception as e:
+                last_error = e
+                break
+
+        if config_index >= len(runtime_configs) - 1:
+            break
+        if last_error is None or not is_fallback_eligible_error(last_error):
+            break
+
+    raise ValueError(f"Failed after {retries + 1} attempts") from last_error
