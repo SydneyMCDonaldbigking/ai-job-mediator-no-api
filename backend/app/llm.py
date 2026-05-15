@@ -322,6 +322,12 @@ def is_fallback_eligible_error(exc: Exception) -> bool:
         "forbidden",
         "rate limit",
         "free",
+        "connection error",
+        "cannot connect",
+        "connecterror",
+        "getaddrinfo failed",
+        "name or service not known",
+        "temporary failure in name resolution",
     )
     return any(marker in message for marker in markers)
 

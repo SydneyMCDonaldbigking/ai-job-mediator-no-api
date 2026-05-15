@@ -129,6 +129,8 @@ class TestCheckLlmHealth:
         assert is_fallback_eligible_error(RuntimeError("403 Forbidden")) is True
         assert is_fallback_eligible_error(RuntimeError("429 rate limit exceeded")) is True
         assert is_fallback_eligible_error(RuntimeError("insufficient credits")) is True
+        assert is_fallback_eligible_error(RuntimeError("getaddrinfo failed")) is True
+        assert is_fallback_eligible_error(RuntimeError("Connection error")) is True
 
     def test_fallback_eligible_error_rejects_application_bugs(self):
         assert is_fallback_eligible_error(ValueError("invalid json payload")) is False
