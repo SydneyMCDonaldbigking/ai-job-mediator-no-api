@@ -9,7 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # Path to config file for API key persistence
-CONFIG_FILE_PATH = Path(__file__).parent.parent / "data" / "config.json"
+APP_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = APP_ROOT.parent
+CONFIG_FILE_PATH = APP_ROOT / "data" / "config.json"
 ALLOWED_LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
 
 
@@ -182,7 +184,36 @@ class Settings(BaseSettings):
         return origins
 
     # Paths
-    data_dir: Path = Path(__file__).parent.parent / "data"
+    data_dir: Path = APP_ROOT / "data"
+
+    @field_validator("data_dir", mode="before")
+    @classmethod
+    def normalize_data_dir(cls, v: Any) -> Path:
+        """Resolve relative data directories consistently across launch points."""
+        if v is None or v == "":
+            return APP_ROOT / "data"
+
+        path = Path(v)
+        if path.is_absolute():
+            return path
+
+        candidates: tuple[Path, ...]
+        if path.parts and path.parts[0] == "backend":
+            candidates = (
+                PROJECT_ROOT / path,
+                APP_ROOT / Path(*path.parts[1:]),
+                APP_ROOT / path,
+            )
+        else:
+            candidates = (
+                APP_ROOT / path,
+                PROJECT_ROOT / path,
+            )
+        for candidate in candidates:
+            if candidate.exists() or candidate.parent.exists():
+                return candidate.resolve()
+
+        return candidates[0].resolve()
 
     @property
     def db_path(self) -> Path:

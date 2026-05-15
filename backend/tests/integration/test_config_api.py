@@ -5,6 +5,7 @@ from unittest.mock import patch, AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.config import CONFIG_FILE_PATH, settings
 from app.main import app
 
 
@@ -45,6 +46,13 @@ class TestLlmConfig:
         assert resp.status_code == 200
         data = resp.json()
         assert data["provider"] == "anthropic"
+
+
+class TestConfigPaths:
+    def test_settings_config_path_is_absolute(self):
+        assert settings.config_path.is_absolute() is True
+        assert CONFIG_FILE_PATH.is_absolute() is True
+        assert settings.config_path == CONFIG_FILE_PATH
 
 
 class TestLlmTest:

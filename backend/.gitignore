@@ -2,6 +2,7 @@
 data/*.json
 data/config.json
 !data/.gitkeep
+!data/config.example.json
 
 # Config file with API keys - NEVER COMMIT
 config.json

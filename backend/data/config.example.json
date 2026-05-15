@@ -1,0 +1,35 @@
+{
+  "provider": "openrouter",
+  "model": "openai/gpt-oss-20b:free",
+  "api_base": null,
+  "api_keys": {
+    "openrouter": "<OPENROUTER_API_KEY>",
+    "openai": "<NVIDIA_API_KEY>"
+  },
+  "llm_fallback_chain": [
+    {
+      "name": "openrouter-free",
+      "provider": "openrouter",
+      "model": "openai/gpt-oss-20b:free",
+      "api_key_provider": "openrouter",
+      "api_base": null,
+      "enabled": true
+    },
+    {
+      "name": "nvidia-free",
+      "provider": "openai",
+      "model": "openai/meta/llama-3.1-70b-instruct",
+      "api_key_provider": "openai",
+      "api_base": "https://integrate.api.nvidia.com/v1",
+      "enabled": true
+    },
+    {
+      "name": "openrouter-auto",
+      "provider": "openrouter",
+      "model": "auto",
+      "api_key_provider": "openrouter",
+      "api_base": null,
+      "enabled": true
+    }
+  ]
+}
