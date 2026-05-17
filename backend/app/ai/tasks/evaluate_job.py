@@ -12,6 +12,7 @@ from app.ai.parsers.evaluate_job import (
     normalize_evaluation_task_result,
 )
 from app.ai.prompts.evaluate_job import build_evaluate_job_prompt
+from app.llm import build_llm_config_chain, is_fallback_eligible_error
 
 if TYPE_CHECKING:
     from app.llm import LLMConfig
@@ -40,8 +41,8 @@ class EvaluateJobRunnableInput(BaseModel):
     keyword_targets: list[str] = Field(default_factory=list)
     market_context: str = ""
     config: LLMConfig | None = None
-    max_tokens: int = 2400
-    retries: int = 2
+    max_tokens: int = 7000
+    retries: int = 0
 
 
 def _build_evaluate_job_payload(
@@ -66,16 +67,45 @@ async def invoke_json_task(
     prompt: str,
     system_prompt: str | None = None,
     config: LLMConfig | None = None,
-    max_tokens: int = 2400,
-    retries: int = 2,
+    max_tokens: int = 7000,
+    retries: int = 0,
 ) -> dict[str, object]:
-    return await core_invoke_json_task(
-        prompt,
-        system_prompt=system_prompt,
-        config=config,
-        max_tokens=max_tokens,
-        retries=retries,
-    )
+    if config is not None:
+        return await core_invoke_json_task(
+            prompt,
+            system_prompt=system_prompt,
+            config=config,
+            max_tokens=max_tokens,
+            retries=retries,
+        )
+
+    runtime_configs = build_llm_config_chain()
+    last_error: Exception | None = None
+
+    for index, runtime_config in enumerate(runtime_configs):
+        try:
+            return await core_invoke_json_task(
+                prompt,
+                system_prompt=system_prompt,
+                config=runtime_config,
+                max_tokens=max_tokens,
+                retries=retries,
+            )
+        except ValueError as exc:
+            last_error = exc
+            if index >= len(runtime_configs) - 1:
+                raise
+            continue
+        except Exception as exc:
+            last_error = exc
+            if index >= len(runtime_configs) - 1 or not is_fallback_eligible_error(exc):
+                raise
+            continue
+
+    if last_error is not None:
+        raise last_error
+
+    raise ValueError("No LLM configurations available for evaluation task")
 
 
 async def _invoke_evaluate_job_payload(payload: dict[str, object]) -> dict[str, object]:
@@ -103,8 +133,8 @@ async def generate_job_evaluation(
     keyword_targets: list[str],
     market_context: str,
     config: LLMConfig | None = None,
-    max_tokens: int = 2400,
-    retries: int = 2,
+    max_tokens: int = 7000,
+    retries: int = 0,
 ) -> GeneratedJobEvaluation:
     task_input = EvaluateJobRunnableInput(
         resume_text=resume_text,

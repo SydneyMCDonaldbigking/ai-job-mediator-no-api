@@ -340,6 +340,16 @@ Return valid JSON only with this shape:
   "keyword_targets": ["ATS keyword", "ATS keyword"]
 }}
 
+Keep the JSON compact:
+- executive_summary: at most 70 words
+- archetype: at most 5 words
+- rationale: one sentence per dimension
+- evidence: at most 2 short evidence bullets per dimension
+- risks: at most 2 short risk bullets per dimension
+- tailoring_priorities: at most 3 short items
+- interview_focus: at most 3 short items
+- keyword_targets: at most 8 items
+
 Return valid JSON only.
 """.strip()
 
@@ -455,6 +465,41 @@ def _infer_resume_seniority(resume_text: str) -> float:
 
 def _score(value: float) -> float:
     return round(max(0.0, min(5.0, value)), 2)
+
+
+def _uses_normalized_score_scale(raw_dimensions: list[dict[str, Any]] | None) -> bool:
+    """Detect LLM outputs that use 0-1 normalized scores instead of 0-5."""
+    if not raw_dimensions:
+        return False
+
+    scores: list[float] = []
+    for item in raw_dimensions:
+        if not isinstance(item, dict):
+            continue
+        raw_score = item.get("score")
+        try:
+            score = float(raw_score)
+        except (TypeError, ValueError):
+            continue
+        scores.append(score)
+
+    if not scores:
+        return False
+
+    return max(scores) <= 1.0
+
+
+def _normalize_dimension_score(raw_score: Any, *, normalized_scale: bool, fallback_score: float) -> float:
+    """Normalize a raw dimension score into the backend's 0-5 scale."""
+    try:
+        score = float(raw_score)
+    except (TypeError, ValueError):
+        score = fallback_score
+
+    if normalized_scale:
+        score *= 5.0
+
+    return _score(score)
 
 
 def _keyword_overlap(resume_text: str, keyword_targets: list[str]) -> tuple[list[str], float]:
@@ -573,6 +618,7 @@ def _normalize_dimension_payload(
 ) -> list[CareerOpsScoreDimension]:
     """Normalize LLM output and fill any missing dimensions from fallback values."""
     fallback_by_key = {dimension.key: dimension for dimension in fallback_dimensions}
+    normalized_scale = _uses_normalized_score_scale(raw_dimensions)
     dimensions: list[CareerOpsScoreDimension] = []
     raw_by_key = {
         str(item.get("key")): item
@@ -588,7 +634,11 @@ def _normalize_dimension_payload(
                 key=blueprint["key"],
                 category=blueprint["category"],
                 label=str(raw.get("label") or blueprint["label"]),
-                score=_score(float(raw.get("score", fallback.score))),
+                score=_normalize_dimension_score(
+                    raw.get("score", fallback.score),
+                    normalized_scale=normalized_scale,
+                    fallback_score=fallback.score,
+                ),
                 rationale=str(raw.get("rationale") or fallback.rationale),
                 evidence=[
                     str(entry)
@@ -645,7 +695,7 @@ async def evaluate_job_fit(
     dimensions = _apply_market_data_to_dimensions(dimensions, market_data)
     af_scores = summarize_af_scores(dimensions)
     overall_score = _score(mean(dimension.score for dimension in dimensions))
-    overall_label = str(raw_result.get("overall_label") or _score_label(overall_score))
+    overall_label = _score_label(overall_score)
     executive_summary = str(
         raw_result.get("executive_summary")
         or f"{overall_label.replace('-', ' ').title()} based on {len(keyword_targets)} keyword targets and {len(dimensions)} scored dimensions."
