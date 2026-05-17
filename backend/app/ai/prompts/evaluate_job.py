@@ -32,6 +32,17 @@ Return JSON only with this shape:
   "keyword_targets": ["keyword 1"]
 }}
 
+Keep the JSON compact:
+- executive_summary: at most 70 words
+- archetype: at most 5 words
+- overall_label: use exactly one of "weak fit", "mixed fit", or "strong fit"
+- rationale: one sentence per dimension
+- evidence: at most 2 short evidence bullets per dimension
+- risks: at most 2 short risk bullets per dimension
+- tailoring_priorities: at most 3 short items
+- interview_focus: at most 3 short items
+- keyword_targets: at most 8 items
+
 Use exactly these dimension definitions:
 {dimension_lines}
 
