@@ -282,7 +282,7 @@ def seed_smoke_portals_example() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the backend in smoke-test mode.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8001)
     args = parser.parse_args()
 
     from app.main import app

@@ -622,7 +622,7 @@ class RealBackendSmokeTests(unittest.TestCase):
                 )
                 page.wait_for_timeout(1000)
                 send_chat_message(page, updated_portals_yaml)
-                page.get_by_text("OpenAI", exact=False).wait_for(timeout=20000)
+                page.locator("a[href*='jobs.ashbyhq.com/openai']").first.wait_for(timeout=20000)
 
                 portals_payload = wait_for_portals_company(backend_url, "OpenAI")
                 self.assertEqual(

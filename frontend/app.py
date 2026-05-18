@@ -24,6 +24,24 @@ from pydantic import BaseModel, Field
 from backend_chat_store import BackendTinyDBDataLayer
 from local_chat_store import LocalJsonDataLayer
 APP_DIR = Path(__file__).resolve().parent
+
+
+def resolve_backend_url() -> str:
+    explicit_url = (os.getenv("BACKEND_URL") or "").strip().rstrip("/")
+    if explicit_url:
+        return explicit_url
+
+    backend_port = (os.getenv("BACKEND_PORT") or "").strip()
+    if backend_port:
+        return f"http://127.0.0.1:{backend_port}"
+
+    port = (os.getenv("PORT") or "").strip()
+    if port:
+        return f"http://127.0.0.1:{port}"
+
+    return "http://127.0.0.1:8001"
+
+
 def env_flag(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -32,7 +50,7 @@ def env_flag(name: str, default: bool = False) -> bool:
 TEST_MODE_ENABLED = env_flag("CHAINLIT_TEST_MODE")
 DATA_DIR = Path(os.getenv("CHAINLIT_APP_DATA_DIR") or (APP_DIR / "data"))
 PUBLIC_DIR = Path(os.getenv("CHAINLIT_APP_PUBLIC_DIR") or (APP_DIR / "public"))
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+BACKEND_URL = resolve_backend_url()
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5-72b")
 APP_USERNAME = os.getenv("CHAINLIT_APP_USERNAME", "local-user")
 APP_PASSWORD = os.getenv("CHAINLIT_APP_PASSWORD", "job-mediator-123")
