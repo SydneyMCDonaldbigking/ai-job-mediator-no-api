@@ -180,26 +180,58 @@ For detailed setup instructions, see **[SETUP.md](SETUP.md)** (English) or: [Esp
 
 ### Quick Start
 
-Fastest for MacOS, WSL and Ubuntu users:
+This repository now uses:
+
+- backend default port `8001`
+- dynamic port resolution: `BACKEND_PORT` -> `PORT` -> `8001`
+- Chainlit frontend that reads the same backend URL chain
+
+Fastest local setup:
 
 ```bash
 # Clone the repository
-git clone https://github.com/srbhr/Resume-Matcher.git
-cd Resume-Matcher
+git clone https://github.com/SydneyMCDonaldbigking/ai-job-mediator-no-api.git
+cd ai-job-mediator-no-api
+
+# Check local prerequisites
+bash ./scripts/check-local-env.sh
 
 # Backend (Terminal 1)
-cd apps/backend
-cp .env.example .env        # Configure your AI provider
-uv sync                      # Install dependencies
-uv run uvicorn app.main:app --reload --port 8000
+bash ./scripts/start-backend.sh
 
 # Frontend (Terminal 2)
-cd apps/frontend
-npm install
-npm run dev
+bash ./scripts/start-frontend.sh
 ```
 
-Open **<http://localhost:3000>** and configure your AI provider in Settings.
+PowerShell equivalents:
+
+```powershell
+python -m pip install -e .\backend
+python -m pip install -r .\frontend\requirements.txt
+python -m playwright install chromium
+powershell -ExecutionPolicy Bypass -File .\scripts\check-local-env.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\start-backend.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\start-frontend.ps1
+```
+
+Default local URLs:
+
+- Frontend: <http://127.0.0.1:3000>
+- Backend health: <http://127.0.0.1:8001/api/v1/health>
+
+Recommended environment values:
+
+```text
+BACKEND_PORT=8001
+BACKEND_URL=http://127.0.0.1:8001
+FRONTEND_BASE_URL=http://localhost:3000
+```
+
+If Playwright PDF or smoke tests fail with a missing browser executable, run:
+
+```bash
+python -m playwright install chromium
+```
 
 ### Supported AI Providers
 
