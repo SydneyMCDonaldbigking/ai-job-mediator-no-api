@@ -227,6 +227,31 @@ BACKEND_URL=http://127.0.0.1:8001
 FRONTEND_BASE_URL=http://localhost:3000
 ```
 
+### Configuration Model
+
+This project uses two configuration layers on purpose:
+
+1. root [`.env.example`](C:/Users/uryuu/Desktop/go_find_a_job/.env.example) -> copied locally to `.env`
+2. backend runtime config at [backend/data/config.example.json](C:/Users/uryuu/Desktop/go_find_a_job/backend/data/config.example.json) -> copied locally to `backend/data/config.json`
+
+Use the root `.env` for:
+
+- host / port binding
+- backend URL resolution
+- frontend public URL
+- simple single-provider overrides
+- local auth defaults
+
+Use `backend/data/config.json` for:
+
+- provider-specific API keys
+- multi-provider fallback chains
+- app-saved configuration such as language, features, and prompts
+
+If `llm_fallback_chain` is present in `backend/data/config.json`, that chain is the runtime source of truth for multi-provider LLM calls.
+
+See [backend/data/README.md](C:/Users/uryuu/Desktop/go_find_a_job/backend/data/README.md) for the practical split and copy steps.
+
 If Playwright PDF or smoke tests fail with a missing browser executable, run:
 
 ```bash
