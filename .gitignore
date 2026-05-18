@@ -127,6 +127,8 @@ config.json
 # Local runtime and recovery artifacts
 .files/
 .tmp_recover/
+.publish/
+agent-skills/
 .tmp/
 pytest-cache-files-*/
 *.log
