@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -150,7 +150,10 @@ class Settings(BaseSettings):
 
     # Server Configuration
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = Field(
+        default=8001,
+        validation_alias=AliasChoices("BACKEND_PORT", "PORT"),
+    )
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
     frontend_base_url: str = "http://localhost:3000"
     job_search_fallback_provider: Literal["auto", "disabled", "brave", "tavily"] = "auto"
