@@ -251,6 +251,7 @@ Use `backend/data/config.json` for:
 If `llm_fallback_chain` is present in `backend/data/config.json`, that chain is the runtime source of truth for multi-provider LLM calls.
 
 See [backend/data/README.md](C:/Users/uryuu/Desktop/go_find_a_job/backend/data/README.md) for the practical split and copy steps.
+See [docs/local-dev-workflow.md](C:/Users/uryuu/Desktop/go_find_a_job/docs/local-dev-workflow.md) for the full local run / smoke / troubleshooting flow.
 
 If Playwright PDF or smoke tests fail with a missing browser executable, run:
 
