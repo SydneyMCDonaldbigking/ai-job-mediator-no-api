@@ -185,8 +185,6 @@ def test_evaluate_job_fit_uses_score_derived_label_when_llm_label_conflicts(
 
     assert result.overall_score == 2.75
     assert result.overall_label == "stretch"
-
-
 def test_evaluate_job_fit_removes_stale_no_web_search_claim_when_market_data_exists(
     monkeypatch,
     sample_resume,
