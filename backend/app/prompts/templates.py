@@ -445,6 +445,9 @@ Do NOT target: personalInfo, dates/years, company names, education, customSectio
 Keywords to emphasize (only if already supported by resume content):
 {job_keywords}
 
+JD Fit Map (requirements, resume evidence, and hard gaps):
+{fit_map_context}
+
 Job Description:
 {job_description}
 
@@ -478,3 +481,4 @@ Output this exact JSON format, nothing else:
   ],
   "strategy_notes": "brief summary of the tailoring approach"
 }}"""
+

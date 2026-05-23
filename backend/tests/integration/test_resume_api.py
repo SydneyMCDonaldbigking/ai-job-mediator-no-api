@@ -7,6 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.schemas.models import ImproveResumeData, ImproveResumeResponse, ResumeData
 
 
 @pytest.fixture
@@ -233,3 +234,89 @@ class TestUploadResume:
         assert first_update.args[0] == "master-123"
         assert first_update.args[1]["content"] == "# New Resume"
         assert first_update.args[1]["processing_status"] == "processing"
+
+
+class TestSelectedJobPreview:
+    """POST /api/v1/resumes/improve/selected-preview"""
+
+    @patch("app.routers.resumes._improve_preview_flow", new_callable=AsyncMock)
+    @patch("app.routers.resumes.evaluate_job_fit", new_callable=AsyncMock)
+    @patch("app.routers.resumes.db")
+    async def test_selected_actionable_job_generates_preview_without_persisting(
+        self,
+        mock_db,
+        mock_evaluate,
+        mock_preview_flow,
+        client,
+        mock_resume_record,
+        sample_resume,
+    ):
+        mock_db.get_resume.return_value = mock_resume_record
+        mock_db.get_job.return_value = {
+            "job_id": "job-123",
+            "content": "Python API Engineer\nRequirements:\n- Python APIs\n",
+            "job_keywords": {"required_skills": ["Python"]},
+            "job_keywords_hash": "stale",
+        }
+        mock_evaluate.return_value = MagicMock(
+            priority_label="worth_checking",
+            tailoring_ready=True,
+            priority_reasons=["Direct Python API evidence."],
+            hard_gaps=[],
+        )
+        mock_preview_flow.return_value = ImproveResumeResponse(
+            request_id="preview-req",
+            data=ImproveResumeData(
+                request_id="preview-req",
+                resume_id=None,
+                job_id="job-123",
+                resume_preview=ResumeData.model_validate(sample_resume),
+                improvements=[],
+                warnings=[],
+            ),
+        )
+
+        async with client:
+            resp = await client.post(
+                "/api/v1/resumes/improve/selected-preview",
+                json={"resume_id": "res-123", "job_id": "job-123"},
+            )
+
+        assert resp.status_code == 200
+        payload = resp.json()["data"]
+        assert payload["resume_id"] is None
+        assert payload["job_id"] == "job-123"
+        mock_preview_flow.assert_awaited_once()
+
+    @patch("app.routers.resumes._improve_preview_flow", new_callable=AsyncMock)
+    @patch("app.routers.resumes.evaluate_job_fit", new_callable=AsyncMock)
+    @patch("app.routers.resumes.db")
+    async def test_selected_skip_job_does_not_auto_tailor_without_override(
+        self,
+        mock_db,
+        mock_evaluate,
+        mock_preview_flow,
+        client,
+        mock_resume_record,
+    ):
+        mock_db.get_resume.return_value = mock_resume_record
+        mock_db.get_job.return_value = {
+            "job_id": "job-123",
+            "content": "Rails Engineer\nRequirements:\n- Ruby on Rails is required\n",
+        }
+        mock_evaluate.return_value = MagicMock(
+            priority_label="skip",
+            tailoring_ready=False,
+            priority_reasons=["Unsupported hard requirement."],
+            hard_gaps=["Ruby on Rails is required"],
+        )
+
+        async with client:
+            resp = await client.post(
+                "/api/v1/resumes/improve/selected-preview",
+                json={"resume_id": "res-123", "job_id": "job-123"},
+            )
+
+        assert resp.status_code == 409
+        assert "Ruby on Rails" in resp.json()["detail"]
+        mock_preview_flow.assert_not_awaited()

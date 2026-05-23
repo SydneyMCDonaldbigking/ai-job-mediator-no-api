@@ -36,10 +36,16 @@ from app.schemas import (
     ResumeSummary,
     ResumeUploadResponse,
     RawResume,
+    SelectedJobTailorRequest,
     UpdateCoverLetterRequest,
     UpdateOutreachMessageRequest,
     UpdateTitleRequest,
     normalize_resume_data,
+)
+from app.career_ops.evaluator import (
+    build_resume_evidence_matches,
+    classify_job_priority,
+    evaluate_job_fit,
 )
 from app.services.parser import parse_document, parse_resume_to_json, restore_dates_from_markdown
 from app.services.improver import (
@@ -441,6 +447,33 @@ def _validate_confirm_payload(
         raise ValueError(f"personalInfo fields changed: {', '.join(mismatches)}")
 
 
+def _build_fit_map_context(
+    original_data: dict[str, Any] | None,
+    job_content: str,
+) -> dict[str, Any] | None:
+    """Build deterministic JD-to-resume evidence context for tailoring prompts."""
+    if not original_data:
+        return None
+    try:
+        resume_data = ResumeData.model_validate(original_data)
+        evidence_matches = build_resume_evidence_matches(resume_data, job_content)
+        priority_label, priority_reasons, hard_gaps, tailoring_ready = (
+            classify_job_priority(evidence_matches)
+        )
+        return {
+            "priority_label": priority_label,
+            "priority_reasons": priority_reasons,
+            "hard_gaps": hard_gaps,
+            "tailoring_ready": tailoring_ready,
+            "evidence_matches": [
+                match.model_dump(exclude_none=True) for match in evidence_matches
+            ],
+        }
+    except Exception as e:
+        logger.warning("Failed to build JD fit map for tailoring: %s", e)
+        return None
+
+
 async def _generate_auxiliary_messages(
     improved_data: dict[str, Any],
     job_content: str,
@@ -766,6 +799,49 @@ async def improve_resume_preview_endpoint(
         _raise_improve_error("preview", stage, e, detail)
 
 
+@router.post("/improve/selected-preview", response_model=ImproveResumeResponse)
+async def improve_selected_job_preview_endpoint(
+    request: SelectedJobTailorRequest,
+) -> ImproveResumeResponse:
+    """Auto-generate a preview when the user selects an actionable job."""
+    resume = db.get_resume(request.resume_id)
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    job = db.get_job(request.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job description not found")
+
+    original_resume_data = _get_original_resume_data(resume)
+    evaluation_resume = original_resume_data or resume.get("content", "")
+    evaluation = await evaluate_job_fit(
+        resume=evaluation_resume,
+        job_description=job["content"],
+    )
+    if evaluation.priority_label == "skip" and not request.override_skip:
+        gap_text = ", ".join(evaluation.hard_gaps) or ", ".join(evaluation.priority_reasons)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Selected job is marked skip; pass override_skip=true to tailor anyway."
+                + (f" Hard gaps: {gap_text}" if gap_text else "")
+            ),
+        )
+
+    preview_request = ImproveResumeRequest(
+        resume_id=request.resume_id,
+        job_id=request.job_id,
+        prompt_id=request.prompt_id,
+    )
+    return await _improve_preview_flow(
+        request=preview_request,
+        resume=resume,
+        job=job,
+        language=get_content_language(),
+        prompt_id=request.prompt_id or _get_default_prompt_id(),
+    )
+
+
 async def _improve_preview_flow(
     *,
     request: ImproveResumeRequest,
@@ -803,6 +879,7 @@ async def _improve_preview_flow(
 
     # Diff-based improvement: generate targeted changes, apply with verification
     if original_resume_data:
+        fit_map = _build_fit_map_context(original_resume_data, job["content"])
         diff_result = await generate_resume_diffs(
             original_resume=resume["content"],
             job_description=job["content"],
@@ -810,6 +887,7 @@ async def _improve_preview_flow(
             language=language,
             prompt_id=prompt_id,
             original_resume_data=original_resume_data,
+            fit_map=fit_map,
         )
 
         improved_data, applied_changes, rejected_changes = apply_diffs(
@@ -1153,6 +1231,7 @@ async def improve_resume_endpoint(
 
         # Diff-based improvement: generate targeted changes, apply with verification
         if original_resume_data:
+            fit_map = _build_fit_map_context(original_resume_data, job["content"])
             diff_result = await generate_resume_diffs(
                 original_resume=resume["content"],
                 job_description=job["content"],
@@ -1160,6 +1239,7 @@ async def improve_resume_endpoint(
                 language=language,
                 prompt_id=prompt_id,
                 original_resume_data=original_resume_data,
+                fit_map=fit_map,
             )
 
             improved_data, applied_changes, rejected_changes = apply_diffs(

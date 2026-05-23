@@ -182,6 +182,37 @@ class TestGenerateResumeDiffs:
         prompt = mock_llm.call_args.kwargs.get("prompt") or mock_llm.call_args.args[0]
         assert "targeted adjustments" in prompt.lower()
 
+    @patch("app.services.improver.complete_json", new_callable=AsyncMock)
+    async def test_includes_fit_map_context_when_available(
+        self,
+        mock_llm,
+        sample_resume,
+        sample_job_keywords,
+    ):
+        mock_llm.return_value = {"changes": [], "strategy_notes": "test"}
+        await generate_resume_diffs(
+            original_resume="# Resume",
+            job_description="JD",
+            job_keywords=sample_job_keywords,
+            original_resume_data=sample_resume,
+            fit_map={
+                "priority_label": "high_priority",
+                "evidence_matches": [
+                    {
+                        "requirement": "Strong Python API development",
+                        "status": "strong",
+                        "evidence_paths": ["workExperience[0].description[0]"],
+                    }
+                ],
+                "hard_gaps": [],
+            },
+        )
+
+        prompt = mock_llm.call_args.kwargs.get("prompt") or mock_llm.call_args.args[0]
+        assert "JD Fit Map" in prompt
+        assert "Strong Python API development" in prompt
+        assert "workExperience[0].description[0]" in prompt
+
 
 class TestGenerateResumeDiffsEdgeCases:
     """Edge cases for generate_resume_diffs."""

@@ -185,3 +185,143 @@ def test_evaluate_job_fit_uses_score_derived_label_when_llm_label_conflicts(
 
     assert result.overall_score == 2.75
     assert result.overall_label == "stretch"
+
+
+def test_evaluate_job_fit_removes_stale_no_web_search_claim_when_market_data_exists(
+    monkeypatch,
+    sample_resume,
+    sample_job_description,
+):
+    async def fake_generate_job_evaluation(**kwargs):
+        del kwargs
+        raise RuntimeError("LLM unavailable")
+
+    async def fake_market_signals(*args, **kwargs):
+        del args, kwargs
+        from app.schemas.models import CareerOpsMarketData, CareerOpsMarketSource
+
+        return CareerOpsMarketData(
+            role_query="Senior Backend Engineer at TechCorp",
+            company_name="TechCorp",
+            salary_mentions=["$180,000 - $240,000"],
+            demand_summary="Collected 2 live search results for demand and compensation signals.",
+            compensation_summary="Salary mentions found: $180,000 - $240,000",
+            sources=[
+                CareerOpsMarketSource(
+                    title="Senior Backend Engineer Salary",
+                    url="https://example.com/backend-salary",
+                    snippet="Median pay is $180,000 - $240,000.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "generate_job_evaluation",
+        fake_generate_job_evaluation,
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "fetch_market_signals",
+        fake_market_signals,
+    )
+
+    result = asyncio.run(
+        evaluate_job_fit(
+            resume=sample_resume,
+            job_description=sample_job_description,
+        )
+    )
+
+    comp_dimension = next(
+        dimension for dimension in result.dimensions if dimension.key == "comp_and_demand_signal"
+    )
+    assert "does not run live market web search" not in comp_dimension.rationale
+    assert "Salary mentions found: $180,000 - $240,000" in comp_dimension.rationale
+
+
+def test_evaluate_job_fit_marks_missing_hard_requirements_as_skip(
+    monkeypatch,
+    sample_resume,
+):
+    async def fake_generate_job_evaluation(**kwargs):
+        del kwargs
+        raise RuntimeError("LLM unavailable")
+
+    async def fake_market_signals(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "generate_job_evaluation",
+        fake_generate_job_evaluation,
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "fetch_market_signals",
+        fake_market_signals,
+    )
+
+    result = asyncio.run(
+        evaluate_job_fit(
+            resume=sample_resume,
+            job_description=(
+                "Senior Backend Engineer\n\n"
+                "Requirements:\n"
+                "- 7+ years backend development experience\n"
+                "- Ruby on Rails production experience is required\n"
+                "- Security clearance is required\n"
+            ),
+        )
+    )
+
+    assert result.priority_label == "skip"
+    assert result.tailoring_ready is False
+    assert any("ruby on rails" in gap.lower() for gap in result.hard_gaps)
+    assert any("security clearance" in gap.lower() for gap in result.hard_gaps)
+
+
+def test_evaluate_job_fit_exposes_evidence_paths_for_actionable_roles(
+    monkeypatch,
+    sample_resume,
+):
+    async def fake_generate_job_evaluation(**kwargs):
+        del kwargs
+        raise RuntimeError("LLM unavailable")
+
+    async def fake_market_signals(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "generate_job_evaluation",
+        fake_generate_job_evaluation,
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "fetch_market_signals",
+        fake_market_signals,
+    )
+
+    result = asyncio.run(
+        evaluate_job_fit(
+            resume=sample_resume,
+            job_description=(
+                "Application Engineer\n\n"
+                "Requirements:\n"
+                "- Strong Python API development experience\n"
+                "- FastAPI or similar framework experience\n"
+                "- Experience with Docker and AWS\n"
+            ),
+        )
+    )
+
+    assert result.priority_label in {"high_priority", "worth_checking"}
+    assert result.tailoring_ready is True
+    assert result.priority_reasons
+    assert any(
+        match.status in {"strong", "partial"} and match.evidence_paths
+        for match in result.evidence_matches
+    )

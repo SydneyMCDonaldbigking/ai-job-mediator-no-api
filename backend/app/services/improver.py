@@ -427,6 +427,7 @@ async def generate_resume_diffs(
     language: str = "en",
     prompt_id: str | None = None,
     original_resume_data: dict[str, Any] | None = None,
+    fit_map: dict[str, Any] | None = None,
 ) -> ImproveDiffResult:
     """Generate targeted resume diffs via LLM.
 
@@ -445,6 +446,7 @@ async def generate_resume_diffs(
         ImproveDiffResult with list of changes and strategy notes
     """
     keywords_str = _prepare_keywords_for_prompt(job_keywords)
+    fit_map_context = _prepare_fit_map_for_prompt(fit_map)
     output_language = get_language_name(language)
 
     selected_id = prompt_id or DEFAULT_IMPROVE_PROMPT_ID
@@ -473,6 +475,7 @@ async def generate_resume_diffs(
         strategy_instruction=strategy_instruction,
         output_language=output_language,
         job_keywords=keywords_str,
+        fit_map_context=fit_map_context,
         job_description=sanitized_jd,
         original_resume=resume_input,
     )
@@ -589,6 +592,16 @@ def _prepare_keywords_for_prompt(job_keywords: dict[str, Any]) -> str:
         sections.append("Additional keywords to weave in naturally:\n- " + "\n- ".join(str(k) for k in keywords))
 
     return "\n\n".join(sections) if sections else "No specific keywords extracted."
+
+
+def _prepare_fit_map_for_prompt(fit_map: dict[str, Any] | None) -> str:
+    """Format JD fit-map context for diff generation."""
+    if not fit_map:
+        return (
+            "No fit map provided. Use only JD keywords and original resume evidence; "
+            "do not invent unsupported requirements."
+        )
+    return json.dumps(fit_map, ensure_ascii=False, indent=2)
 
 
 async def improve_resume(

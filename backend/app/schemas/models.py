@@ -447,6 +447,24 @@ class CareerOpsScoreDimension(BaseModel):
     risks: list[str] = Field(default_factory=list)
 
 
+class JDRequirement(BaseModel):
+    """Single requirement extracted from a job description."""
+
+    text: str
+    category: Literal["hard", "preferred", "responsibility", "caution"] = "hard"
+
+
+class ResumeEvidenceMatch(BaseModel):
+    """How one JD requirement maps to concrete resume evidence."""
+
+    requirement: str
+    category: Literal["hard", "preferred", "responsibility", "caution"] = "hard"
+    status: Literal["strong", "partial", "missing", "not_applicable"] = "missing"
+    evidence_paths: list[str] = Field(default_factory=list)
+    rationale: str = ""
+    risk: str | None = None
+
+
 class CareerOpsEvaluationData(BaseModel):
     """Structured A-F job evaluation payload."""
 
@@ -460,6 +478,16 @@ class CareerOpsEvaluationData(BaseModel):
     interview_focus: list[str] = Field(default_factory=list)
     keyword_targets: list[str] = Field(default_factory=list)
     market_data: "CareerOpsMarketData | None" = None
+    priority_label: Literal[
+        "high_priority",
+        "worth_checking",
+        "stretch",
+        "skip",
+    ] = "stretch"
+    priority_reasons: list[str] = Field(default_factory=list)
+    evidence_matches: list[ResumeEvidenceMatch] = Field(default_factory=list)
+    hard_gaps: list[str] = Field(default_factory=list)
+    tailoring_ready: bool = False
 
 
 class CareerOpsEvaluateRequest(BaseModel):
@@ -752,6 +780,15 @@ class ImproveResumeRequest(BaseModel):
     resume_id: str
     job_id: str
     prompt_id: str | None = None
+
+
+class SelectedJobTailorRequest(BaseModel):
+    """Request to auto-preview tailoring after the user selects a job."""
+
+    resume_id: str
+    job_id: str
+    prompt_id: str | None = None
+    override_skip: bool = False
 
 
 class ImprovementSuggestion(BaseModel):

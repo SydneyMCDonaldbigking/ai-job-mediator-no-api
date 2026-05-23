@@ -20,7 +20,9 @@ from app.schemas.models import (
     CareerOpsEvaluationData,
     CareerOpsMarketData,
     CareerOpsScoreDimension,
+    JDRequirement,
     ResumeData,
+    ResumeEvidenceMatch,
     normalize_resume_data,
 )
 
@@ -101,6 +103,7 @@ DEFAULT_DIMENSION_BLUEPRINT: list[dict[str, str]] = [
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#./-]{2,}")
 _NUMBER_RE = re.compile(r"\b(?:\d+%|\$\d+(?:[.,]\d+)?[KMB]?|\d+[KMB]?|\d+\+)\b")
 _YEARS_RE = re.compile(r"(\d+)\+?\s+years?", re.IGNORECASE)
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$")
 
 _STOPWORDS = {
     "about",
@@ -153,6 +156,37 @@ _KNOWN_KEYWORDS = [
     "Multi-agent",
     "Observability",
     "OpenAI",
+]
+
+_REQUIREMENT_STOPWORDS = {
+    "and",
+    "are",
+    "backend",
+    "development",
+    "engineer",
+    "engineering",
+    "experience",
+    "familiarity",
+    "framework",
+    "frameworks",
+    "required",
+    "requirements",
+    "similar",
+    "skills",
+    "strong",
+    "using",
+    "with",
+    "years",
+}
+
+_CAUTION_TERMS = [
+    "security clearance",
+    "quota",
+    "cold calling",
+    "pure frontend",
+    "frontend only",
+    "must be located",
+    "onsite only",
 ]
 
 
@@ -263,6 +297,213 @@ def extract_keyword_targets(job_description: str, limit: int = 12) -> list[str]:
             break
 
     return keywords[:limit]
+
+
+def _clean_requirement_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip(" -\t\r\n")).strip()
+
+
+def extract_jd_requirements(job_description: str) -> list[JDRequirement]:
+    """Extract actionable requirements from a JD without narrowing search recall."""
+    requirements: list[JDRequirement] = []
+    lower = job_description.lower()
+
+    for line in job_description.splitlines():
+        match = _BULLET_LINE_RE.match(line)
+        if not match:
+            continue
+        text = _clean_requirement_text(match.group(1))
+        if not text:
+            continue
+        category = "preferred" if any(
+            token in text.lower() for token in ("preferred", "plus", "nice to have")
+        ) else "hard"
+        requirements.append(JDRequirement(text=text, category=category))
+
+    for caution in _CAUTION_TERMS:
+        if caution in lower and not any(
+            caution in req.text.lower() for req in requirements
+        ):
+            requirements.append(JDRequirement(text=caution, category="caution"))
+
+    if not requirements:
+        for keyword in extract_keyword_targets(job_description, limit=6):
+            requirements.append(JDRequirement(text=keyword, category="hard"))
+
+    deduped: list[JDRequirement] = []
+    seen: set[str] = set()
+    for requirement in requirements:
+        key = requirement.text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(requirement)
+    return deduped[:12]
+
+
+def _resume_evidence_entries(resume_data: ResumeData) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    if resume_data.summary:
+        entries.append(("summary", resume_data.summary))
+
+    for index, item in enumerate(resume_data.workExperience):
+        if item.title:
+            entries.append((f"workExperience[{index}].title", item.title))
+        for bullet_index, bullet in enumerate(item.description):
+            entries.append((f"workExperience[{index}].description[{bullet_index}]", bullet))
+
+    for index, item in enumerate(resume_data.personalProjects):
+        if item.name:
+            entries.append((f"personalProjects[{index}].name", item.name))
+        for bullet_index, bullet in enumerate(item.description):
+            entries.append((f"personalProjects[{index}].description[{bullet_index}]", bullet))
+
+    for skill_index, skill in enumerate(resume_data.additional.technicalSkills):
+        entries.append((f"additional.technicalSkills[{skill_index}]", skill))
+
+    for cert_index, cert in enumerate(resume_data.additional.certificationsTraining):
+        entries.append((f"additional.certificationsTraining[{cert_index}]", cert))
+
+    return entries
+
+
+def _requirement_tokens(requirement: str) -> list[str]:
+    tokens: list[str] = []
+    lower_requirement = requirement.lower()
+    for keyword in _KNOWN_KEYWORDS:
+        if keyword.lower() in lower_requirement:
+            tokens.append(keyword.lower())
+
+    for token in _TOKEN_RE.findall(requirement):
+        lowered = token.lower().strip(".,:;()[]{}")
+        if len(lowered) < 4 or lowered in _REQUIREMENT_STOPWORDS:
+            continue
+        if lowered not in tokens:
+            tokens.append(lowered)
+    return tokens
+
+
+def _matches_requirement_token(entry_text: str, token: str) -> bool:
+    lower_entry = entry_text.lower()
+    if token == "api":
+        return "api" in lower_entry or "apis" in lower_entry
+    return token in lower_entry
+
+
+def build_resume_evidence_matches(
+    resume_data: ResumeData,
+    job_description: str,
+) -> list[ResumeEvidenceMatch]:
+    """Map JD requirements to concrete resume paths."""
+    requirements = extract_jd_requirements(job_description)
+    entries = _resume_evidence_entries(resume_data)
+    resume_text = " ".join(text for _, text in entries).lower()
+    matches: list[ResumeEvidenceMatch] = []
+
+    for requirement in requirements:
+        tokens = _requirement_tokens(requirement.text)
+        if not tokens:
+            matches.append(
+                ResumeEvidenceMatch(
+                    requirement=requirement.text,
+                    category=requirement.category,
+                    status="not_applicable",
+                    rationale="No actionable requirement tokens were found.",
+                )
+            )
+            continue
+
+        evidence_paths: list[str] = []
+        matched_tokens: set[str] = set()
+        for path, text in entries:
+            entry_tokens = {
+                token for token in tokens if _matches_requirement_token(text, token)
+            }
+            if not entry_tokens:
+                continue
+            matched_tokens.update(entry_tokens)
+            if path not in evidence_paths:
+                evidence_paths.append(path)
+
+        if requirement.category == "caution" and requirement.text.lower() not in resume_text:
+            status = "missing"
+        elif len(matched_tokens) >= max(1, min(2, len(tokens))):
+            status = "strong"
+        elif matched_tokens:
+            status = "partial"
+        else:
+            status = "missing"
+
+        risk = None
+        if status == "missing" and requirement.category in {"hard", "caution"}:
+            risk = "No direct resume evidence for this requirement."
+        elif status == "partial":
+            risk = "Only adjacent or incomplete resume evidence was found."
+
+        matches.append(
+            ResumeEvidenceMatch(
+                requirement=requirement.text,
+                category=requirement.category,
+                status=status,
+                evidence_paths=evidence_paths[:4],
+                rationale=(
+                    f"Matched {len(matched_tokens)} of {len(tokens)} requirement signal(s)."
+                    if matched_tokens
+                    else "No matching resume evidence found."
+                ),
+                risk=risk,
+            )
+        )
+
+    return matches
+
+
+def classify_job_priority(
+    evidence_matches: list[ResumeEvidenceMatch],
+) -> tuple[str, list[str], list[str], bool]:
+    """Classify whether a selected JD is worth tailoring."""
+    hard_matches = [
+        match for match in evidence_matches if match.category in {"hard", "caution"}
+    ]
+    strong_hard = [
+        match for match in hard_matches if match.status == "strong"
+    ]
+    partial_hard = [
+        match for match in hard_matches if match.status == "partial"
+    ]
+    hard_gaps = [
+        match.requirement
+        for match in hard_matches
+        if match.status == "missing"
+    ]
+    caution_gaps = [
+        match.requirement
+        for match in hard_matches
+        if match.category == "caution" and match.status == "missing"
+    ]
+
+    if caution_gaps or len(hard_gaps) >= 2:
+        label = "skip"
+    elif len(hard_gaps) == 1:
+        label = "stretch"
+    elif len(strong_hard) >= 2:
+        label = "high_priority"
+    elif strong_hard or partial_hard:
+        label = "worth_checking"
+    else:
+        label = "stretch"
+
+    reasons: list[str] = []
+    if strong_hard:
+        reasons.append(f"{len(strong_hard)} hard requirement(s) have direct resume evidence.")
+    if partial_hard:
+        reasons.append(f"{len(partial_hard)} hard requirement(s) have partial evidence.")
+    if hard_gaps:
+        reasons.append(f"{len(hard_gaps)} hard requirement gap(s) need caution.")
+    if label == "skip":
+        reasons.append("Skip auto-tailoring until the user explicitly overrides this decision.")
+
+    return label, reasons, hard_gaps, label != "skip"
 
 
 def summarize_af_scores(dimensions: list[dict[str, Any]] | list[CareerOpsScoreDimension]) -> dict[str, float]:
@@ -405,6 +646,10 @@ def _apply_market_data_to_dimensions(
             updated.append(dimension)
             continue
 
+        rationale = dimension.rationale.replace(
+            "Block D is intentionally conservative because this backend does not run live market web search.",
+            "Block D uses live market signals conservatively and keeps unsupported claims out of the score.",
+        ).strip()
         evidence = list(dimension.evidence)
         risks = list(dimension.risks)
         if market_data.salary_mentions:
@@ -420,7 +665,7 @@ def _apply_market_data_to_dimensions(
                 category=dimension.category,
                 label=dimension.label,
                 score=_score(max(dimension.score, 3.2 if market_data.sources else dimension.score)),
-                rationale=f"{dimension.rationale} {market_data.compensation_summary} {market_data.demand_summary}".strip(),
+                rationale=f"{rationale} {market_data.compensation_summary} {market_data.demand_summary}".strip(),
                 evidence=evidence,
                 risks=risks,
             )
@@ -693,6 +938,10 @@ async def evaluate_job_fit(
         company_name=infer_company_name(job_description),
     )
     dimensions = _apply_market_data_to_dimensions(dimensions, market_data)
+    evidence_matches = build_resume_evidence_matches(resume_data, job_description)
+    priority_label, priority_reasons, hard_gaps, tailoring_ready = classify_job_priority(
+        evidence_matches
+    )
     af_scores = summarize_af_scores(dimensions)
     overall_score = _score(mean(dimension.score for dimension in dimensions))
     overall_label = _score_label(overall_score)
@@ -746,4 +995,9 @@ async def evaluate_job_fit(
         interview_focus=interview_focus,
         keyword_targets=returned_keywords[:12],
         market_data=market_data,
+        priority_label=priority_label,
+        priority_reasons=priority_reasons,
+        evidence_matches=evidence_matches,
+        hard_gaps=hard_gaps,
+        tailoring_ready=tailoring_ready,
     )
