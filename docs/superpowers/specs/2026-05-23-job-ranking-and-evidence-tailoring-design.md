@@ -24,7 +24,8 @@ keywords is out of scope because it risks reducing the job pool.
    evidence, not just title or keyword overlap.
 3. Make each recommendation explain why the job is high priority, worth checking,
    stretch, or skip.
-4. Feed only sufficiently promising JDs into deeper resume tailoring.
+4. Automatically tailor the resume preview when the user selects a job that is
+   worth acting on.
 5. Make resume tailoring use JD requirements plus resume evidence, so changes are
    precise rather than shallow keyword substitutions.
 
@@ -129,8 +130,19 @@ compatibility, but enrich the payload with:
 Search endpoints do not need to reduce result count. Later, callers can use the
 new fields to sort and group results.
 
+When a user selects a job, the backend should automatically prepare a tailored
+resume preview for actionable jobs:
+
+- `high_priority`: auto-generate tailored preview
+- `worth_checking`: auto-generate tailored preview
+- `stretch`: auto-generate tailored preview only because the user explicitly
+  selected it
+- `skip`: do not auto-tailor; return the skip reasons and require explicit
+  override before tailoring
+
 Resume improvement endpoints should consume the fit map internally when tailoring
-against a stored JD.
+against a stored JD. The automatic flow should use preview mode first, not direct
+persistence, so the user can inspect changes before saving a tailored resume.
 
 ## Testing Strategy
 
@@ -141,6 +153,9 @@ Add tests that prove:
   lower than a role with slightly weaker title overlap but stronger evidence
 - hard missing requirements appear in `hard_gaps`
 - `high_priority` and `worth_checking` decisions include evidence paths
+- selecting a high-priority or worth-checking job can trigger tailored preview
+  generation without saving it
+- selecting a skip job does not auto-tailor unless an explicit override is passed
 - resume diff generation includes fit-map context in the prompt
 - unsupported JD requirements are not turned into resume changes
 
@@ -149,15 +164,14 @@ Add tests that prove:
 1. Add schema and deterministic evidence helpers.
 2. Add tests for role priority classification.
 3. Integrate the classifier into `evaluate_job_fit`.
-4. Add fit-map context to diff-based resume tailoring.
-5. Keep existing API fields working while exposing the new fields for future UI
+4. Add selected-job auto-tailoring preview behavior.
+5. Add fit-map context to diff-based resume tailoring.
+6. Keep existing API fields working while exposing the new fields for future UI
    grouping and explanations.
 
 ## Open Questions
 
 - Should `skip` jobs be hidden by default in the frontend or shown in a collapsed
   section?
-- Should `stretch` jobs be allowed to trigger resume tailoring automatically, or
-  require explicit user approval first?
 - Should the priority gate use only local deterministic logic at first, or allow
   the LLM to propose a classification that local rules then normalize?
