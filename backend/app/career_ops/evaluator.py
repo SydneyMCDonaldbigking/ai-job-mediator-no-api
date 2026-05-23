@@ -328,7 +328,7 @@ def extract_jd_requirements(job_description: str) -> list[JDRequirement]:
 
     if not requirements:
         for keyword in extract_keyword_targets(job_description, limit=6):
-            requirements.append(JDRequirement(text=keyword, category="hard"))
+            requirements.append(JDRequirement(text=keyword, category="responsibility"))
 
     deduped: list[JDRequirement] = []
     seen: set[str] = set()

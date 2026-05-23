@@ -325,3 +325,43 @@ def test_evaluate_job_fit_exposes_evidence_paths_for_actionable_roles(
         match.status in {"strong", "partial"} and match.evidence_paths
         for match in result.evidence_matches
     )
+
+
+def test_evaluate_job_fit_does_not_treat_unstructured_keywords_as_hard_gaps(
+    monkeypatch,
+    sample_resume,
+):
+    async def fake_generate_job_evaluation(**kwargs):
+        del kwargs
+        raise RuntimeError("LLM unavailable")
+
+    async def fake_market_signals(*args, **kwargs):
+        del args, kwargs
+        return None
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "generate_job_evaluation",
+        fake_generate_job_evaluation,
+    )
+    monkeypatch.setattr(
+        evaluator_module,
+        "fetch_market_signals",
+        fake_market_signals,
+    )
+
+    result = asyncio.run(
+        evaluate_job_fit(
+            resume=sample_resume,
+            job_description=(
+                "AI Engineer - Sydney Hybrid. The team builds Python services, "
+                "REST APIs, and cloud integrations across AWS, GCP, and Azure. "
+                "The role is suitable for someone who can learn client delivery "
+                "contexts while applying automation and LLM tooling."
+            ),
+        )
+    )
+
+    assert result.priority_label != "skip"
+    assert "GCP" not in result.hard_gaps
+    assert "Azure" not in result.hard_gaps
