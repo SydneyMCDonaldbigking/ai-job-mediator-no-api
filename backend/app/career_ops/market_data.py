@@ -18,6 +18,19 @@ _SALARY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _TAG_RE = re.compile(r"<[^>]+>")
+_WORD_RE = re.compile(r"[^\W\d_][\w+#./-]*", re.UNICODE)
+_MARKET_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "for",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+}
 
 
 def build_market_search_queries(role_query: str, company_name: str | None = None) -> list[str]:
@@ -69,6 +82,46 @@ def parse_duckduckgo_results(html: str) -> list[dict[str, str]]:
     return results
 
 
+def _normalized_tokens(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in _WORD_RE.findall(text)
+        if token and token.lower() not in _MARKET_STOPWORDS
+    }
+
+
+def filter_market_results(
+    results: list[dict[str, str]],
+    *,
+    role_query: str,
+    company_name: str | None = None,
+) -> list[dict[str, str]]:
+    """Drop obviously unrelated market results before summarizing them."""
+    role_tokens = _normalized_tokens(role_query)
+    company_tokens = _normalized_tokens(company_name or "")
+    filtered: list[dict[str, str]] = []
+
+    for item in results:
+        haystack = " ".join(
+            [
+                item.get("title", ""),
+                item.get("snippet", ""),
+                item.get("url", ""),
+            ]
+        )
+        haystack_tokens = _normalized_tokens(haystack)
+
+        if company_tokens and company_tokens.intersection(haystack_tokens):
+            filtered.append(item)
+            continue
+
+        overlap = role_tokens.intersection(haystack_tokens)
+        if len(overlap) >= 2:
+            filtered.append(item)
+
+    return filtered
+
+
 async def fetch_market_signals(
     role_query: str,
     company_name: str | None = None,
@@ -90,7 +143,13 @@ async def fetch_market_signals(
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             response.raise_for_status()
-            for item in parse_duckduckgo_results(response.text)[:3]:
+            parsed_results = parse_duckduckgo_results(response.text)
+            filtered_results = filter_market_results(
+                parsed_results,
+                role_query=role_query,
+                company_name=company_name,
+            )
+            for item in filtered_results[:3]:
                 if item["url"] in seen_urls:
                     continue
                 seen_urls.add(item["url"])

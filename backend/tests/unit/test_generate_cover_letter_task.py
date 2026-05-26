@@ -3,6 +3,7 @@ import importlib
 
 import pytest
 
+from app.ai.prompts.generate_cover_letter import build_generate_cover_letter_prompt
 from app.ai.tasks.generate_cover_letter import (
     CoverLetterRunnableInput,
     build_generate_cover_letter_runnable,
@@ -94,3 +95,14 @@ def test_generate_cover_letter_service_delegates_to_ai_task(
     )
 
     assert result == "Delegated cover letter"
+
+
+def test_build_generate_cover_letter_prompt_does_not_leak_mojibake_markers():
+    prompt = build_generate_cover_letter_prompt(
+        resume_data={"summary": "Python backend engineer"},
+        job_description="TechCorp is hiring a Senior FastAPI engineer role",
+        language="en",
+    )
+
+    for marker in ("鈥", "銆", "浣", "鍙", "疜", "憃", "檚"):
+        assert marker not in prompt

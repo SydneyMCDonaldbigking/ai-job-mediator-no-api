@@ -3,6 +3,7 @@
 from app.career_ops.market_data import (
     build_market_search_queries,
     extract_salary_mentions,
+    filter_market_results,
     parse_duckduckgo_results,
 )
 
@@ -37,3 +38,59 @@ def test_parse_duckduckgo_results_extracts_titles_snippets_and_urls():
     assert results[0]["title"] == "Senior Backend Engineer Salary"
     assert results[0]["url"] == "https://example.com/salary"
     assert "$180,000 - $240,000" in results[0]["snippet"]
+
+
+def test_filter_market_results_drops_unrelated_salary_pages():
+    results = [
+        {
+            "title": "Senior Backend Engineer Salary in the United States",
+            "url": "https://salary.com/backend",
+            "snippet": "Median pay is $180,000 for senior backend engineers.",
+        },
+        {
+            "title": "Microsoft Salaries | Levels.fyi",
+            "url": "https://levels.fyi/microsoft",
+            "snippet": "Compensation across Microsoft engineering roles.",
+        },
+        {
+            "title": "TechCorp Salary Guide",
+            "url": "https://example.com/techcorp-salary",
+            "snippet": "TechCorp compensation data for backend hiring.",
+        },
+    ]
+
+    filtered = filter_market_results(
+        results,
+        role_query="Senior Backend Engineer at TechCorp",
+        company_name="TechCorp",
+    )
+
+    assert [item["title"] for item in filtered] == [
+        "Senior Backend Engineer Salary in the United States",
+        "TechCorp Salary Guide",
+    ]
+
+
+def test_filter_market_results_keeps_relevant_non_english_results():
+    results = [
+        {
+            "title": "バックエンドエンジニア 年収ガイド",
+            "url": "https://example.com/backend-salary-ja",
+            "snippet": "OpenAI Japan のバックエンドエンジニア向け報酬データ。",
+        },
+        {
+            "title": "Microsoft Salaries | Levels.fyi",
+            "url": "https://levels.fyi/microsoft",
+            "snippet": "Compensation across Microsoft engineering roles.",
+        },
+    ]
+
+    filtered = filter_market_results(
+        results,
+        role_query="バックエンドエンジニア",
+        company_name="OpenAI Japan",
+    )
+
+    assert [item["title"] for item in filtered] == [
+        "バックエンドエンジニア 年収ガイド",
+    ]
