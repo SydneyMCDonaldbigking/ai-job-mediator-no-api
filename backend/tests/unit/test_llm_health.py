@@ -8,6 +8,7 @@ import pytest
 from app.llm import (
     LLMConfig,
     _normalize_api_base,
+    _sanitize_llm_text,
     build_llm_config_chain,
     check_llm_health,
     complete,
@@ -380,6 +381,43 @@ class TestCheckLlmHealth:
 
         assert result == "final answer"
 
+    def test_sanitize_llm_text_repairs_common_mojibake_sequences(self):
+        assert (
+            _sanitize_llm_text("Jane has solid 6鈥憏ear backend experience.")
+            == "Jane has solid 6-year backend experience."
+        )
+        assert _sanitize_llm_text("Jane has solid 6‑year backend experience.") == (
+            "Jane has solid 6-year backend experience."
+        )
+        assert (
+            _sanitize_llm_text("I鈥檓 comfortable with hands鈥憃n Docker work at 50鈥疜 RPS.")
+            == "I'm comfortable with hands-on Docker work at 50K RPS."
+        )
+
+    def test_sanitize_llm_text_preserves_normal_cjk_text(self):
+        text = "后端工程师需要 Python 和 FastAPI 经验。"
+
+        assert _sanitize_llm_text(text) == text
+
+    @pytest.mark.asyncio
+    @patch("app.llm.get_router")
+    async def test_complete_sanitizes_mojibake_text(self, mock_get_router):
+        router = SimpleNamespace(
+            acompletion=AsyncMock(
+                return_value=_response_with_content("Jane has solid 6鈥憏ear backend experience.")
+            )
+        )
+        config = LLMConfig(
+            provider="openrouter",
+            model="openai/gpt-oss-20b:free",
+            api_key="or-key",
+        )
+        mock_get_router.return_value = (router, config)
+
+        result = await complete("hello", config=config)
+
+        assert result == "Jane has solid 6-year backend experience."
+
     @pytest.mark.asyncio
     @patch("app.llm._supports_json_mode", return_value=False)
     @patch("app.llm.get_router")
@@ -437,3 +475,32 @@ class TestCheckLlmHealth:
             result = await complete_json("hello")
 
         assert result == {"status": "ok"}
+
+    @pytest.mark.asyncio
+    @patch("app.llm._supports_json_mode", return_value=False)
+    @patch("app.llm.get_router")
+    async def test_complete_json_sanitizes_string_values(
+        self,
+        mock_get_router,
+        _mock_supports_json_mode,
+    ):
+        router = SimpleNamespace(
+            acompletion=AsyncMock(
+                return_value=_response_with_content(
+                    '{"executive_summary":"Jane has solid 6鈥憏ear backend experience.","nested":{"note":"I鈥檓 ready"}}'
+                )
+            )
+        )
+        config = LLMConfig(
+            provider="openrouter",
+            model="openai/gpt-oss-20b:free",
+            api_key="or-key",
+        )
+        mock_get_router.return_value = (router, config)
+
+        result = await complete_json("hello", config=config)
+
+        assert result == {
+            "executive_summary": "Jane has solid 6-year backend experience.",
+            "nested": {"note": "I'm ready"},
+        }
