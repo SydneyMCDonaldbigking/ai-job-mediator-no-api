@@ -19,13 +19,23 @@ from app.career_ops.evaluator import (
     resume_to_text,
 )
 from app.schemas.models import ResumeData, TailoredPDFResult, normalize_resume_data
+from app.services.improver import apply_diffs
 from app.services.improver import extract_job_keywords as extract_job_keywords_llm
+from app.services.improver import generate_resume_diffs
 from app.services.improver import improve_resume
+from app.services.improver import verify_diff_result
 
 logger = logging.getLogger(__name__)
 
 _TEMPLATE_PATH = Path(__file__).parent / "templates" / "cv_template.html"
 _ZERO_WIDTH_RE = re.compile(r"[\u200B\u200C\u200D\u2060\uFEFF]")
+_LOW_SIGNAL_COMPETENCIES = {
+    "vs code",
+    "clion",
+    "vscode",
+    "figma",
+    "unreal engine",
+}
 
 
 class CareerOpsPDFError(Exception):
@@ -87,8 +97,97 @@ def _join_contact(parts: list[str]) -> str:
     return " <span class=\"separator\">|</span> ".join(safe_parts) or "Not provided"
 
 
-def _render_competencies(keywords: list[str]) -> str:
-    items = keywords[:12] or ["Targeted resume generated from the supplied job description"]
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        normalized = _compact_whitespace(item)
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+    return result
+
+
+def _resume_text_supports_keyword(resume_text: str, keyword: str) -> bool:
+    normalized_keyword = _compact_whitespace(keyword)
+    if not normalized_keyword:
+        return False
+    return normalized_keyword.casefold() in resume_text.casefold()
+
+
+def _keyword_matches_technical_skill(keyword: str, technical_skills: list[str]) -> bool:
+    normalized_keyword = _compact_whitespace(keyword).casefold()
+    if not normalized_keyword:
+        return False
+    for skill in technical_skills:
+        normalized_skill = _compact_whitespace(skill).casefold()
+        if not normalized_skill:
+            continue
+        if normalized_keyword == normalized_skill:
+            return True
+        keyword_tokens = [token for token in re.split(r"[^a-z0-9+#./-]+", normalized_keyword) if token]
+        skill_tokens = [token for token in re.split(r"[^a-z0-9+#./-]+", normalized_skill) if token]
+        if normalized_keyword in skill_tokens:
+            return True
+        if normalized_skill in keyword_tokens:
+            return True
+        if normalized_keyword.replace("-", "") == normalized_skill.replace("-", ""):
+            return True
+    return False
+
+
+def _select_competencies(
+    resume: ResumeData | dict | str,
+    keywords: list[str],
+    limit: int = 12,
+) -> list[str]:
+    resume = coerce_resume_data(resume)
+    resume_text = resume_to_text(resume)
+    technical_skills = [
+        _compact_whitespace(skill)
+        for skill in resume.additional.technicalSkills
+        if _compact_whitespace(skill)
+    ]
+
+    matched_keywords = [
+        keyword
+        for keyword in keywords
+        if _resume_text_supports_keyword(resume_text, keyword)
+        and _keyword_matches_technical_skill(keyword, technical_skills)
+    ]
+
+    prioritized: list[str] = []
+
+    # Prefer JD-aligned technologies that are actually supported by the resume.
+    for keyword in matched_keywords:
+        keyword_lower = keyword.casefold()
+        matching_skill = next(
+            (skill for skill in technical_skills if skill.casefold() == keyword_lower),
+            None,
+        )
+        prioritized.append(matching_skill or keyword)
+
+    # Then fill with the candidate's real technical skills, ordered by JD overlap.
+    remaining_skills = [
+        skill for skill in technical_skills if skill.casefold() not in {item.casefold() for item in prioritized}
+    ]
+    prioritized.extend(_reorder_by_keyword_hits(remaining_skills, matched_keywords or keywords))
+
+    filtered = [
+        item for item in _dedupe_preserve_order(prioritized)
+        if item.casefold() not in _LOW_SIGNAL_COMPETENCIES
+    ]
+    return filtered[:limit]
+
+
+def _render_competencies(resume: ResumeData | dict | str, keywords: list[str]) -> str:
+    items = _select_competencies(resume, keywords) or [
+        "Targeted resume generated from the supplied job description"
+    ]
     return "\n".join(
         f'<span class="competency-tag">{escape(_compact_whitespace(item))}</span>'
         for item in items
@@ -129,22 +228,43 @@ def _render_experience(resume: ResumeData) -> str:
     return "\n".join(jobs)
 
 
-def _render_projects(resume: ResumeData) -> str:
+def _is_project_like_experience(title: str, company: str) -> bool:
+    haystack = f"{title} {company}".casefold()
+    markers = (
+        "project",
+        "research",
+        "university",
+        "lab",
+        "capstone",
+    )
+    return any(marker in haystack for marker in markers)
+
+
+def _project_like_entries(resume: ResumeData) -> list:
+    return [
+        item
+        for item in resume.workExperience
+        if _is_project_like_experience(item.title, item.company)
+    ]
+
+
+def _render_projects(resume: ResumeData | dict | str) -> str:
+    resume = coerce_resume_data(resume)
     if not resume.personalProjects:
         return '<div class="project"><div class="project-desc">No project data provided.</div></div>'
 
     projects: list[str] = []
     for item in resume.personalProjects:
-        description = " ".join(
-            escape(_compact_whitespace(bullet))
-            for bullet in item.description
+        bullets = "\n".join(
+            f"<li>{escape(_compact_whitespace(bullet))}</li>"
+            for bullet in item.description[:4]
             if _compact_whitespace(bullet)
-        ) or "No project highlights provided."
+        ) or "<li>No project highlights provided.</li>"
         projects.append(
             f"""
 <div class="project">
   <div class="project-title">{escape(_compact_whitespace(item.name))} <span class="project-badge">{escape(_compact_whitespace(item.role))}</span></div>
-  <div class="project-desc">{description}</div>
+  <div class="project-desc"><ul>{bullets}</ul></div>
   <div class="project-tech">{escape(_compact_whitespace(item.years))}</div>
 </div>
 """.strip()
@@ -240,7 +360,7 @@ def render_resume_html(
         "{{SECTION_CERTIFICATIONS}}": "Certifications",
         "{{SECTION_SKILLS}}": "Skills",
         "{{SUMMARY_TEXT}}": escape(_compact_whitespace(normalized_resume.summary) or "Summary not provided."),
-        "{{COMPETENCIES}}": _render_competencies(keyword_targets),
+        "{{COMPETENCIES}}": _render_competencies(normalized_resume, keyword_targets),
         "{{EXPERIENCE}}": _render_experience(normalized_resume),
         "{{PROJECTS}}": _render_projects(normalized_resume),
         "{{EDUCATION}}": _render_education(normalized_resume),
@@ -279,13 +399,15 @@ def _reorder_by_keyword_hits(items: list[str], keywords: list[str]) -> list[str]
     return sorted(items, key=score)
 
 
-def _heuristic_tailor_resume(resume: ResumeData, keyword_targets: list[str]) -> ResumeData:
+def _heuristic_tailor_resume(
+    resume: ResumeData | dict | str,
+    keyword_targets: list[str],
+) -> ResumeData:
     """Fallback tailoring that only reorders/emphasizes already-present facts."""
+    resume = coerce_resume_data(resume)
     payload = copy.deepcopy(resume.model_dump())
     resume_text = resume_to_text(resume)
-    matched_keywords = [
-        keyword for keyword in keyword_targets if keyword.lower() in resume_text.lower()
-    ]
+    matched_keywords = _select_competencies(resume, keyword_targets, limit=6)
 
     summary = payload.get("summary", "").strip()
     if matched_keywords:
@@ -301,6 +423,18 @@ def _heuristic_tailor_resume(resume: ResumeData, keyword_targets: list[str]) -> 
             matched_keywords or keyword_targets,
         )
 
+    work_experience = payload.get("workExperience", [])
+    if work_experience:
+        def experience_score(job: dict[str, object]) -> tuple[int, int, str]:
+            text_parts = [str(job.get("title", "")), str(job.get("company", ""))]
+            text_parts.extend(str(item) for item in job.get("description", []))
+            text = " ".join(text_parts).lower()
+            hits = sum(1 for keyword in matched_keywords if keyword.lower() in text)
+            project_bonus = 1 if _is_project_like_experience(str(job.get("title", "")), str(job.get("company", ""))) else 0
+            return (-hits, -project_bonus, text)
+
+        payload["workExperience"] = sorted(work_experience, key=experience_score)
+
     for job in payload.get("workExperience", []):
         descriptions = job.get("description", [])
         if descriptions:
@@ -308,6 +442,54 @@ def _heuristic_tailor_resume(resume: ResumeData, keyword_targets: list[str]) -> 
                 descriptions,
                 matched_keywords or keyword_targets,
             )
+
+    payload = normalize_resume_data(payload)
+    return ResumeData.model_validate(payload)
+
+
+def _postprocess_pdf_resume(
+    resume: ResumeData | dict | str,
+    keyword_targets: list[str],
+) -> ResumeData:
+    """Apply deterministic polish for the PDF-only tailoring flow."""
+    resume = coerce_resume_data(resume)
+    payload = copy.deepcopy(resume.model_dump())
+
+    technical_skills = payload.get("additional", {}).get("technicalSkills", [])
+    if technical_skills:
+        payload["additional"]["technicalSkills"] = _reorder_by_keyword_hits(
+            technical_skills,
+            keyword_targets,
+        )
+
+    work_experience = payload.get("workExperience", [])
+    if work_experience:
+        project_entries = [
+            job for job in work_experience
+            if _is_project_like_experience(str(job.get("title", "")), str(job.get("company", "")))
+        ]
+
+        if not payload.get("personalProjects") and project_entries:
+            payload["personalProjects"] = [
+                {
+                    "id": index + 1,
+                    "name": str(job.get("company", "")).strip() or f"Project {index + 1}",
+                    "role": str(job.get("title", "")).strip(),
+                    "years": str(job.get("years", "")).strip(),
+                    "description": list(job.get("description", []))[:4],
+                }
+                for index, job in enumerate(project_entries)
+            ]
+
+        def experience_score(job: dict[str, object]) -> tuple[int, int, str]:
+            text_parts = [str(job.get("title", "")), str(job.get("company", ""))]
+            text_parts.extend(str(item) for item in job.get("description", []))
+            text = " ".join(text_parts).lower()
+            hits = sum(1 for keyword in keyword_targets if keyword.lower() in text)
+            project_bonus = 1 if _is_project_like_experience(str(job.get("title", "")), str(job.get("company", ""))) else 0
+            return (-hits, -project_bonus, text)
+
+        payload["workExperience"] = sorted(work_experience, key=experience_score)
 
     payload = normalize_resume_data(payload)
     return ResumeData.model_validate(payload)
@@ -344,6 +526,7 @@ async def _tailor_resume(
             original_resume=resume_to_text(resume),
             job_description=job_description,
             job_keywords=job_keywords,
+            prompt_id="full",
             original_resume_data=resume.model_dump(),
         )
         tailored_payload = _restore_protected_fields(
@@ -351,10 +534,47 @@ async def _tailor_resume(
             tailored_payload,
         )
         tailored_payload = normalize_resume_data(copy.deepcopy(tailored_payload))
-        return ResumeData.model_validate(tailored_payload), keyword_targets
+        return _postprocess_pdf_resume(tailored_payload, keyword_targets), keyword_targets
     except Exception as exc:
-        logger.warning("Tailored resume generation fell back to local heuristic: %s", exc)
-        return _heuristic_tailor_resume(resume, keyword_targets), keyword_targets
+        logger.warning("Full-output tailoring failed, trying diff fallback: %s", exc)
+        try:
+            diff_result = await generate_resume_diffs(
+                original_resume=resume_to_text(resume),
+                job_description=job_description,
+                job_keywords=job_keywords,
+                language="en",
+                prompt_id="full",
+                original_resume_data=resume.model_dump(),
+            )
+            improved_data, applied_changes, rejected_changes = apply_diffs(
+                original=resume.model_dump(),
+                changes=diff_result.changes,
+            )
+            diff_warnings = verify_diff_result(
+                original=resume.model_dump(),
+                result=improved_data,
+                applied_changes=applied_changes,
+                job_keywords=job_keywords,
+            )
+            if rejected_changes or diff_warnings:
+                logger.info(
+                    "PDF diff fallback applied %d changes, rejected %d, warnings=%d",
+                    len(applied_changes),
+                    len(rejected_changes),
+                    len(diff_warnings),
+                )
+            improved_data = _restore_protected_fields(
+                resume.model_dump(),
+                improved_data,
+            )
+            improved_data = normalize_resume_data(copy.deepcopy(improved_data))
+            return _postprocess_pdf_resume(improved_data, keyword_targets), keyword_targets
+        except Exception as diff_exc:
+            logger.warning("Tailored resume generation fell back to local heuristic: %s", diff_exc)
+        return _postprocess_pdf_resume(
+            _heuristic_tailor_resume(resume, keyword_targets),
+            keyword_targets,
+        ), keyword_targets
 
 
 def _find_chromium_executable() -> str | None:

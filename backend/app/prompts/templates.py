@@ -269,6 +269,10 @@ Rules:
 - You may rephrase bullet points to include keyword phrasing
 - Do NOT introduce new skills, tools, or certifications not in the resume
 - Do NOT change role, industry, or seniority level
+- Keep skills and competencies focused on genuine capabilities. Do NOT surface recruiting noise such as location names, work arrangements, search codenames, hiring slogans, or seniority labels as if they were skills.
+- For non-software or brand-facing roles, rewrite bullets in terms of transferable software/AI value where the evidence exists: cross-functional collaboration, stakeholder communication, workflow improvement, experimentation, delivery ownership, analytics, and customer/problem feedback loops.
+- If the candidate has AI, data, or automation work, describe it with stronger engineering framing already supported by the resume, such as pipelines, retrieval, orchestration, evaluation, reliability, integration, and decision support.
+- Prefer concise bullets over dense prose, and keep quantified outcomes only when the numbers already exist in the source resume.
 - For customSections: preserve exact structure, item count, titles, subtitles, and years. If an item's description is an empty array [] in the original, keep it empty []. Do NOT generate descriptions for items that had none.
 - Copy the "years" field values EXACTLY as they appear in the original resume (including any month prefixes like "Jan 2020 - Present"). Do not shorten, reformat, or drop months.
 - If resume is non-technical, keep language non-technical while still aligning keywords
@@ -299,10 +303,16 @@ Rules:
 - Preserve existing action verbs. Do not invent quantifiable achievements not in the original.
 - Keep proper nouns (names, company names, locations) unchanged
 - Translate job titles, descriptions, and skills to {output_language}
+- Use Australian-style resume writing: clear, grounded, collaborative, and evidence-based. Highlight teamwork, stakeholder communication, ownership, and quantified outcomes when those facts already exist.
+- Keep skills and competencies focused on genuine capabilities. Do NOT surface recruiting noise such as location names, work arrangements, search codenames, hiring slogans, or seniority labels as if they were skills.
+- For non-software or brand-facing roles, reinterpret the experience in terms of transferable software/AI value where supported by the resume: cross-functional collaboration, stakeholder communication, workflow improvement, experimentation, analytics, delivery ownership, and customer insight.
+- If the candidate has AI, automation, analytics, or data work, elevate the framing using senior engineering language already supported by the source material, such as pipelines, retrieval, orchestration, evaluation, reliability, integration, and decision support.
+- Keep projects segmented and scannable with 2-4 concise bullets per project instead of merged paragraphs.
 - For customSections: preserve exact structure, item count, titles, subtitles, and years. If an item's description is an empty array [] in the original, keep it empty []. Do NOT generate descriptions for items that had none.
 - Improve custom section content the same way as standard sections
 - Copy the "years" field values EXACTLY as they appear in the original resume (including any month prefixes like "Jan 2020 - Present"). Do not shorten, reformat, or drop months.
 - Calculate and emphasize total relevant experience duration when it matches requirements
+- Trim redundancy. Prefer sharper wording and quantified outcomes over repeating the same skill in multiple bullets.
 - Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
 
 Job Description:

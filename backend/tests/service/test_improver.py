@@ -39,6 +39,32 @@ class TestExtractJobKeywords:
         prompt = call_args.kwargs.get("prompt", call_args.args[0] if call_args.args else "")
         assert "ignore all previous instructions" not in prompt.lower()
 
+    @patch("app.services.improver.complete", new_callable=AsyncMock)
+    @patch("app.services.improver.complete_json", new_callable=AsyncMock)
+    async def test_recovers_keywords_from_plain_text_when_json_mode_fails(
+        self,
+        mock_complete_json,
+        mock_complete,
+        sample_job_description,
+    ):
+        mock_complete_json.side_effect = ValueError("No JSON found in response")
+        mock_complete.return_value = (
+            "required_skills: Python, JavaScript\n"
+            "preferred_skills: AWS, GitHub\n"
+            "keywords: workflow automation, prompt engineering\n"
+            "experience_years: 2\n"
+            "seniority_level: junior\n"
+        )
+
+        result = await extract_job_keywords(sample_job_description)
+
+        assert result["required_skills"] == ["Python", "JavaScript"]
+        assert result["preferred_skills"] == ["AWS", "GitHub"]
+        assert result["keywords"] == ["workflow automation", "prompt engineering"]
+        assert result["experience_years"] == 2
+        assert result["seniority_level"] == "junior"
+        mock_complete.assert_awaited_once()
+
 
 class TestGenerateResumeDiffs:
     """Tests for generate_resume_diffs() with mocked LLM."""

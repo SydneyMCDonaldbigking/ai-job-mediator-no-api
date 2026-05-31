@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from app.llm import complete_json
+from app.llm import complete, complete_json
 from app.prompts import (
     CRITICAL_TRUTHFULNESS_RULES,
     DEFAULT_IMPROVE_PROMPT_ID,
@@ -35,6 +35,60 @@ _INJECTION_PATTERNS = [
     r"\[\s*INST\s*\]",
     r"\[\s*/\s*INST\s*\]",
 ]
+
+
+def _parse_keyword_recovery_text(text: str) -> dict[str, Any]:
+    """Parse a plain-text keyword summary into the expected keyword schema."""
+    result: dict[str, Any] = {
+        "required_skills": [],
+        "preferred_skills": [],
+        "experience_requirements": [],
+        "education_requirements": [],
+        "key_responsibilities": [],
+        "keywords": [],
+        "experience_years": None,
+        "seniority_level": None,
+    }
+    key_map = {
+        "required_skills": "required_skills",
+        "preferred_skills": "preferred_skills",
+        "experience_requirements": "experience_requirements",
+        "education_requirements": "education_requirements",
+        "key_responsibilities": "key_responsibilities",
+        "keywords": "keywords",
+        "experience_years": "experience_years",
+        "seniority_level": "seniority_level",
+    }
+
+    for raw_line in text.splitlines():
+        if ":" not in raw_line:
+            continue
+        key, value = raw_line.split(":", 1)
+        normalized_key = key.strip().lower()
+        target_key = key_map.get(normalized_key)
+        if not target_key:
+            continue
+        cleaned_value = value.strip()
+        if target_key in {
+            "required_skills",
+            "preferred_skills",
+            "experience_requirements",
+            "education_requirements",
+            "key_responsibilities",
+            "keywords",
+        }:
+            result[target_key] = [
+                item.strip()
+                for item in cleaned_value.split(",")
+                if item.strip()
+            ]
+        elif target_key == "experience_years":
+            match = re.search(r"\d+", cleaned_value)
+            result[target_key] = int(match.group(0)) if match else None
+        elif target_key == "seniority_level":
+            result[target_key] = cleaned_value or None
+
+    return result
 
 
 @dataclass(frozen=True)
@@ -530,10 +584,27 @@ async def extract_job_keywords(job_description: str) -> dict[str, Any]:
     sanitized_jd = _sanitize_user_input(job_description)
     prompt = EXTRACT_KEYWORDS_PROMPT.format(job_description=sanitized_jd)
 
-    return await complete_json(
-        prompt=prompt,
-        system_prompt="You are an expert job description analyzer.",
-    )
+    try:
+        return await complete_json(
+            prompt=prompt,
+            system_prompt="You are an expert job description analyzer.",
+        )
+    except ValueError:
+        recovery_prompt = (
+            "Summarize the job requirements in plain text using exactly these keys, "
+            "one per line: required_skills, preferred_skills, experience_requirements, "
+            "education_requirements, key_responsibilities, keywords, experience_years, "
+            "seniority_level.\n\n"
+            "Separate list items with commas only.\n\n"
+            f"Job description:\n{sanitized_jd}"
+        )
+        recovery_text = await complete(
+            prompt=recovery_prompt,
+            system_prompt="You are an expert job description analyzer. Output plain text only.",
+            max_tokens=512,
+            temperature=0.0,
+        )
+        return _parse_keyword_recovery_text(recovery_text)
 
 
 MONTH_PATTERN = re.compile(
