@@ -35,7 +35,32 @@ _LOW_SIGNAL_COMPETENCIES = {
     "vscode",
     "figma",
     "unreal engine",
+    "c",
+    "product user-centered design",
 }
+_HIGH_SIGNAL_COMPETENCY_TERMS = (
+    "ai",
+    "llm",
+    "rag",
+    "automation",
+    "data",
+    "machine learning",
+    "model",
+    "python",
+    "sql",
+    "pipeline",
+    "retrieval",
+    "prompt",
+    "evaluation",
+    "analytics",
+    "opc",
+    "industrial",
+    "cloud",
+    "aws",
+    "gcp",
+    "azure",
+    "api",
+)
 
 
 class CareerOpsPDFError(Exception):
@@ -171,11 +196,17 @@ def _select_competencies(
         )
         prioritized.append(matching_skill or keyword)
 
-    # Then fill with the candidate's real technical skills, ordered by JD overlap.
+    def competency_score(skill: str) -> tuple[int, int, str]:
+        lowered = skill.casefold()
+        signal_hits = sum(1 for term in _HIGH_SIGNAL_COMPETENCY_TERMS if term in lowered)
+        jd_hits = sum(1 for keyword in (matched_keywords or keywords) if keyword.casefold() in lowered)
+        return (-signal_hits, -jd_hits, lowered)
+
+    # Then fill with the candidate's real technical skills, ordered by relevance and signal.
     remaining_skills = [
         skill for skill in technical_skills if skill.casefold() not in {item.casefold() for item in prioritized}
     ]
-    prioritized.extend(_reorder_by_keyword_hits(remaining_skills, matched_keywords or keywords))
+    prioritized.extend(sorted(remaining_skills, key=competency_score))
 
     filtered = [
         item for item in _dedupe_preserve_order(prioritized)

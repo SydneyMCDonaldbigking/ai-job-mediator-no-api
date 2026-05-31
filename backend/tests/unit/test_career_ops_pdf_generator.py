@@ -102,6 +102,47 @@ def test_render_competencies_filters_recruiting_noise(sample_resume):
     assert "Unreal Engine" not in html
 
 
+def test_render_competencies_prioritizes_ai_relevant_skills(sample_resume):
+    sample_resume["additional"]["technicalSkills"] = [
+        "Python",
+        "C",
+        "SQL",
+        "Industrial Automation (OPC Integration)",
+        "Computer Automation Scripts",
+        "AI Model Fine-Tuning and Deployment",
+        "Product User-Centered Design",
+        "Data-Driven Decision Making",
+        "Prompt Engineering",
+        "Model Evaluation",
+        "LLM Application Development",
+        "RAG Pipeline Design",
+    ]
+
+    html = _render_competencies(
+        sample_resume,
+        [
+            "Python",
+            "LLM",
+            "RAG",
+            "workflow automation",
+            "data engineering",
+            "analytics",
+            "prompt engineering",
+            "model evaluation",
+            "rag pipeline",
+        ],
+    )
+    assert "Python" in html
+    assert "AI Model Fine-Tuning and Deployment" in html
+    assert "Computer Automation Scripts" in html
+    assert "Prompt Engineering" in html
+    assert "Model Evaluation" in html
+    assert "LLM Application Development" in html
+    assert "RAG Pipeline Design" in html
+    assert '<span class="competency-tag">C</span>' not in html
+    assert "Product User-Centered Design" not in html
+
+
 def test_render_projects_preserves_bullets(sample_resume):
     html = _render_projects(sample_resume)
 
