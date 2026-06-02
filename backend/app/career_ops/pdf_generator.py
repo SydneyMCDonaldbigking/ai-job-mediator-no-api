@@ -61,6 +61,96 @@ _HIGH_SIGNAL_COMPETENCY_TERMS = (
     "azure",
     "api",
 )
+_EVIDENCE_COMPETENCY_PATTERNS = (
+    (re.compile(r"\bretrieval-augmented generation\b|\brag\b", re.IGNORECASE), "RAG Workflow Automation"),
+    (re.compile(r"\bllm\b|large language model", re.IGNORECASE), "LLM Solution Prototyping"),
+    (re.compile(r"\bprompt engineering\b", re.IGNORECASE), "Prompt Engineering"),
+    (re.compile(r"\bmodel evaluation\b|\bevaluation loop", re.IGNORECASE), "Model Evaluation"),
+    (re.compile(r"\bnlp\b|sentiment classification", re.IGNORECASE), "NLP Sentiment Classification"),
+    (re.compile(r"\bcomputer vision\b|pest recognition", re.IGNORECASE), "Computer Vision Models"),
+    (re.compile(r"\bworkflow automation\b|desktop ui automation|openclaw", re.IGNORECASE), "AI Workflow Automation"),
+    (re.compile(r"\bopc\b|industrial", re.IGNORECASE), "Industrial AI Automation"),
+)
+_LOW_SIGNAL_BULLET_TERMS = (
+    "unreal engine",
+    "interactive game",
+    "cat vs dog",
+    "figma",
+)
+_AI_PROFILE_TERMS = (
+    "ai",
+    "llm",
+    "rag",
+    "automation",
+    "machine learning",
+    "model",
+    "nlp",
+    "computer vision",
+    "cv",
+    "retrieval",
+    "pipeline",
+    "prompt",
+    "evaluation",
+    "data",
+    "python",
+    "sql",
+    "opc",
+    "industrial",
+)
+_PRIORITY_BULLET_TERMS = (
+    "rag",
+    "retrieval-augmented generation",
+    "llm",
+    "large language model",
+    "automation",
+    "workflow automation",
+    "workflow",
+    "agent",
+    "agentic",
+    "prompt",
+    "evaluation",
+)
+_SOLUTION_BULLET_TERMS = (
+    "model",
+    "designed",
+    "trained",
+    "developed",
+    "implemented",
+    "machine learning",
+    "retrieval-augmented generation",
+    "rag",
+    "llm",
+    "workflow automation",
+)
+_COLLABORATION_TERMS = (
+    "stakeholder",
+    "client",
+    "customer",
+    "team",
+    "consultant",
+    "developer",
+    "cross-functional",
+    "partnered",
+    "collaborated",
+)
+_IMPACT_TERMS = (
+    "improved",
+    "reduced",
+    "increased",
+    "delivered",
+    "built",
+    "designed",
+    "developed",
+    "automated",
+    "optimized",
+    "launched",
+    "implemented",
+    "led",
+    "supported",
+    "coordinated",
+    "streamlined",
+)
+_METRIC_RE = re.compile(r"(\d+[%+]|\$\d+|\d+\s?(k|m|b)|\d+\s?(x|hours|days|weeks|months|users|requests))", re.IGNORECASE)
 
 
 class CareerOpsPDFError(Exception):
@@ -196,11 +286,35 @@ def _select_competencies(
         )
         prioritized.append(matching_skill or keyword)
 
-    def competency_score(skill: str) -> tuple[int, int, str]:
+    def competency_score(skill: str) -> tuple[int, int, int, str]:
         lowered = skill.casefold()
         signal_hits = sum(1 for term in _HIGH_SIGNAL_COMPETENCY_TERMS if term in lowered)
         jd_hits = sum(1 for keyword in (matched_keywords or keywords) if keyword.casefold() in lowered)
-        return (-signal_hits, -jd_hits, lowered)
+        evidence_bonus = 1 if any(pattern.search(lowered) for pattern, _label in _EVIDENCE_COMPETENCY_PATTERNS) else 0
+        return (-evidence_bonus, -signal_hits, -jd_hits, lowered)
+
+    evidence_text_parts: list[str] = []
+    for job in resume.workExperience:
+        evidence_text_parts.append(job.title)
+        evidence_text_parts.append(job.company)
+        evidence_text_parts.extend(job.description)
+    for project in resume.personalProjects:
+        evidence_text_parts.append(project.name)
+        evidence_text_parts.append(project.role)
+        evidence_text_parts.extend(project.description)
+    evidence_text = " ".join(_compact_whitespace(part) for part in evidence_text_parts if _compact_whitespace(part))
+
+    evidence_competencies = [
+        label
+        for pattern, label in _EVIDENCE_COMPETENCY_PATTERNS
+        if pattern.search(evidence_text)
+    ]
+    prioritized.extend(
+        sorted(
+            evidence_competencies,
+            key=competency_score,
+        )
+    )
 
     # Then fill with the candidate's real technical skills, ordered by relevance and signal.
     remaining_skills = [
@@ -213,6 +327,132 @@ def _select_competencies(
         if item.casefold() not in _LOW_SIGNAL_COMPETENCIES
     ]
     return filtered[:limit]
+
+
+def _has_any_term(text: str, terms: tuple[str, ...]) -> bool:
+    lowered = _compact_whitespace(text).casefold()
+    return any(term in lowered for term in terms)
+
+
+def _tighten_bullet_language(bullet: str) -> str:
+    tightened = _compact_whitespace(bullet)
+    replacements = (
+        (r"^responsible for\b", "Managed"),
+        (r"^in charge of\b", "Managed"),
+        (r"^worked on\b", "Delivered"),
+        (r"^helped with\b", "Supported"),
+        (r"^assisted with\b", "Supported"),
+        (r"^involved in\b", "Contributed to"),
+    )
+    for pattern, replacement in replacements:
+        tightened = re.sub(pattern, replacement, tightened, flags=re.IGNORECASE)
+    phrase_replacements = (
+        (
+            r"\bcoordinated (target )?customer feedback\b.*\b(workflow|workflows)\b.*",
+            "Coordinated customer feedback loops and streamlined team workflows to improve content relevance and delivery consistency.",
+        ),
+        (
+            r"\bfounded and (managed|led) a (small )?social media team focused on content creation and community engagement\b",
+            "Led a social media team delivering content operations and community engagement across multiple channels",
+        ),
+        (
+            r"\boperated and promoted accounts on .* achieving consistent audience growth\b",
+            "Managed and grew social media channels across Xiaohongshu (RED) and Douyin (TikTok China), driving consistent audience growth",
+        ),
+    )
+    for pattern, replacement in phrase_replacements:
+        tightened = re.sub(pattern, replacement, tightened, flags=re.IGNORECASE)
+    return tightened
+
+
+def _score_experience_bullet(
+    bullet: str,
+    keyword_targets: list[str],
+    *,
+    title: str = "",
+    company: str = "",
+) -> tuple[int, int, int, int, int, str]:
+    normalized = _compact_whitespace(bullet)
+    lowered = normalized.casefold()
+    jd_hits = sum(1 for keyword in keyword_targets if _compact_whitespace(keyword).casefold() in lowered)
+    solution_hits = sum(1 for term in _SOLUTION_BULLET_TERMS if term in lowered)
+    if "prediction model" in lowered:
+        solution_hits += 3
+    if "retrieval-augmented generation" in lowered or re.search(r"\brag\b", lowered):
+        solution_hits += 2
+    if "machine learning techniques" in lowered:
+        solution_hits += 1
+    priority_hits = sum(1 for term in _PRIORITY_BULLET_TERMS if term in lowered)
+    ai_hits = sum(1 for term in _AI_PROFILE_TERMS if term in lowered)
+    collaboration_hits = sum(1 for term in _COLLABORATION_TERMS if term in lowered)
+    impact_hits = sum(1 for term in _IMPACT_TERMS if term in lowered)
+    metric_bonus = 1 if _METRIC_RE.search(lowered) else 0
+    low_signal_penalty = sum(1 for term in _LOW_SIGNAL_BULLET_TERMS if term in lowered)
+    role_context = f"{_compact_whitespace(title)} {_compact_whitespace(company)}".casefold()
+    project_bonus = 1 if _is_project_like_experience(title, company) or _has_any_term(role_context, _AI_PROFILE_TERMS) else 0
+    return (
+        -solution_hits,
+        -metric_bonus,
+        -ai_hits,
+        -impact_hits,
+        -priority_hits,
+        -collaboration_hits,
+        low_signal_penalty,
+        -(jd_hits + project_bonus),
+        lowered,
+    )
+
+
+def _polish_summary(payload: dict[str, object], keyword_targets: list[str]) -> str:
+    current = _compact_whitespace(str(payload.get("summary", "")))
+    for pattern, replacement in (
+        (r"\bautomation scripting\b", "automation tooling"),
+        (r"\bautomation scripts\b", "automation tooling"),
+        (r"\bweb-based projects\b", "digital product delivery"),
+        (
+            r"\bStrong collaborator with experience working across cross-functional teams\b",
+            "Strong collaborator across cross-functional teams",
+        ),
+    ):
+        current = re.sub(pattern, replacement, current, flags=re.IGNORECASE)
+    work_experience = payload.get("workExperience", [])
+    evidence_text_parts = [current]
+    for job in work_experience:
+        evidence_text_parts.append(str(job.get("title", "")))
+        evidence_text_parts.append(str(job.get("company", "")))
+        evidence_text_parts.extend(str(item) for item in job.get("description", []))
+    evidence_text = " ".join(evidence_text_parts)
+
+    ai_evidence = _has_any_term(evidence_text, _AI_PROFILE_TERMS)
+    collaboration_evidence = _has_any_term(evidence_text, _COLLABORATION_TERMS)
+    summary_has_ai = _has_any_term(current, _AI_PROFILE_TERMS)
+    summary_has_collaboration = _has_any_term(current, _COLLABORATION_TERMS)
+    needs_ai_boost = ai_evidence and not summary_has_ai
+
+    extras: list[str] = []
+    if needs_ai_boost:
+        extras.append(
+            "Brings hands-on experience delivering AI and automation projects across Python, data workflows, and practical operational improvements."
+        )
+    if needs_ai_boost and collaboration_evidence:
+        extras.append(
+            "Works closely with stakeholders and cross-functional teams to turn prototypes into useful, production-facing workflow improvements."
+        )
+    elif (
+        collaboration_evidence
+        and not summary_has_collaboration
+        and current
+        and re.search(r"\b(student|experience in|background in)\b", current, flags=re.IGNORECASE)
+    ):
+        extras.append(
+            "Collaborates effectively with stakeholders and cross-functional teams to deliver practical workflow improvements."
+        )
+
+    if not current:
+        return " ".join(extras).strip()
+    if not extras:
+        return current
+    return f"{current} {' '.join(extras)}".strip()
 
 
 def _render_competencies(resume: ResumeData | dict | str, keywords: list[str]) -> str:
@@ -493,6 +733,8 @@ def _postprocess_pdf_resume(
             keyword_targets,
         )
 
+    payload["summary"] = _polish_summary(payload, keyword_targets)
+
     work_experience = payload.get("workExperience", [])
     if work_experience:
         project_entries = [
@@ -521,6 +763,21 @@ def _postprocess_pdf_resume(
             return (-hits, -project_bonus, text)
 
         payload["workExperience"] = sorted(work_experience, key=experience_score)
+        for job in payload["workExperience"]:
+            descriptions = [
+                _tighten_bullet_language(str(item))
+                for item in job.get("description", [])
+                if _compact_whitespace(str(item))
+            ]
+            job["description"] = sorted(
+                descriptions,
+                key=lambda bullet: _score_experience_bullet(
+                    bullet,
+                    keyword_targets,
+                    title=str(job.get("title", "")),
+                    company=str(job.get("company", "")),
+                ),
+            )
 
     payload = normalize_resume_data(payload)
     return ResumeData.model_validate(payload)
