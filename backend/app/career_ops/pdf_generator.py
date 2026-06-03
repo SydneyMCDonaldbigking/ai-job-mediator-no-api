@@ -391,13 +391,13 @@ def _score_experience_bullet(
     role_context = f"{_compact_whitespace(title)} {_compact_whitespace(company)}".casefold()
     project_bonus = 1 if _is_project_like_experience(title, company) or _has_any_term(role_context, _AI_PROFILE_TERMS) else 0
     return (
+        low_signal_penalty,
         -solution_hits,
         -metric_bonus,
         -ai_hits,
         -impact_hits,
         -priority_hits,
         -collaboration_hits,
-        low_signal_penalty,
         -(jd_hits + project_bonus),
         lowered,
     )
@@ -474,7 +474,7 @@ def _render_experience(resume: ResumeData) -> str:
     for item in resume.workExperience:
         bullets = "\n".join(
             f"<li>{escape(_compact_whitespace(bullet))}</li>"
-            for bullet in item.description
+            for bullet in item.description[:4]
             if _compact_whitespace(bullet)
         ) or "<li>No bullet points provided.</li>"
 
@@ -509,6 +509,13 @@ def _is_project_like_experience(title: str, company: str) -> bool:
         "capstone",
     )
     return any(marker in haystack for marker in markers)
+
+
+def _is_academic_project_experience(title: str, company: str) -> bool:
+    haystack = f"{title} {company}".casefold()
+    return _is_project_like_experience(title, company) and bool(
+        re.search(r"\b(university|unsw|school|college|lab|capstone)\b", haystack)
+    )
 
 
 def _project_like_entries(resume: ResumeData) -> list:
@@ -585,9 +592,10 @@ def _render_certifications(resume: ResumeData) -> str:
     )
 
 
-def _render_skills(resume: ResumeData) -> str:
+def _render_skills(resume: ResumeData, keywords: list[str] | None = None) -> str:
+    technical_skills = _select_competencies(resume, keywords or [], limit=10)
     groups = [
-        ("Technical", resume.additional.technicalSkills),
+        ("Technical", technical_skills),
         ("Languages", resume.additional.languages),
         ("Awards", resume.additional.awards),
     ]
@@ -636,7 +644,7 @@ def render_resume_html(
         "{{PROJECTS}}": _render_projects(normalized_resume),
         "{{EDUCATION}}": _render_education(normalized_resume),
         "{{CERTIFICATIONS}}": _render_certifications(normalized_resume),
-        "{{SKILLS}}": _render_skills(normalized_resume),
+        "{{SKILLS}}": _render_skills(normalized_resume, keyword_targets),
     }
 
     html = template
@@ -741,18 +749,65 @@ def _postprocess_pdf_resume(
             job for job in work_experience
             if _is_project_like_experience(str(job.get("title", "")), str(job.get("company", "")))
         ]
+        academic_project_entries = [
+            job for job in work_experience
+            if _is_academic_project_experience(str(job.get("title", "")), str(job.get("company", "")))
+        ]
+
+        def project_summary(index: int, job: dict[str, object]) -> dict[str, object]:
+            descriptions = [
+                _tighten_bullet_language(str(item))
+                for item in job.get("description", [])
+                if _compact_whitespace(str(item))
+            ]
+            descriptions = sorted(
+                descriptions,
+                key=lambda bullet: _score_experience_bullet(
+                    bullet,
+                    keyword_targets,
+                    title=str(job.get("title", "")),
+                    company=str(job.get("company", "")),
+                ),
+            )
+            return {
+                "id": index + 1,
+                "name": str(job.get("company", "")).strip() or f"Project {index + 1}",
+                "role": str(job.get("title", "")).strip(),
+                "years": str(job.get("years", "")).strip(),
+                "description": descriptions[:4],
+            }
 
         if not payload.get("personalProjects") and project_entries:
             payload["personalProjects"] = [
-                {
-                    "id": index + 1,
-                    "name": str(job.get("company", "")).strip() or f"Project {index + 1}",
-                    "role": str(job.get("title", "")).strip(),
-                    "years": str(job.get("years", "")).strip(),
-                    "description": list(job.get("description", []))[:4],
-                }
+                project_summary(index, job)
                 for index, job in enumerate(project_entries)
             ]
+        elif academic_project_entries:
+            existing_projects = payload.get("personalProjects", [])
+            existing_keys = {
+                (
+                    str(project.get("name", "")).casefold(),
+                    str(project.get("role", "")).casefold(),
+                    str(project.get("years", "")).casefold(),
+                )
+                for project in existing_projects
+            }
+            next_index = len(existing_projects)
+            for job in academic_project_entries:
+                key = (
+                    str(job.get("company", "")).casefold(),
+                    str(job.get("title", "")).casefold(),
+                    str(job.get("years", "")).casefold(),
+                )
+                if key not in existing_keys:
+                    existing_projects.append(project_summary(next_index, job))
+                    next_index += 1
+            payload["personalProjects"] = existing_projects
+
+        work_experience = [
+            job for job in work_experience
+            if not _is_academic_project_experience(str(job.get("title", "")), str(job.get("company", "")))
+        ]
 
         def experience_score(job: dict[str, object]) -> tuple[int, int, str]:
             text_parts = [str(job.get("title", "")), str(job.get("company", ""))]
