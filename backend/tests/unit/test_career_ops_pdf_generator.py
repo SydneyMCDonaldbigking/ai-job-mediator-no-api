@@ -206,6 +206,34 @@ def test_render_competencies_prioritizes_ai_evidence_over_generic_tail_items(sam
     assert "Computer Vision Models" in html
 
 
+def test_render_resume_html_filters_low_signal_bottom_skills(sample_resume):
+    sample_resume["additional"]["technicalSkills"] = [
+        "Python",
+        "C",
+        "CLion",
+        "Figma",
+        "Unreal Engine",
+        "VS Code",
+        "Industrial Automation (OPC Integration)",
+        "AI Model Fine-Tuning and Deployment",
+    ]
+
+    html = render_resume_html(
+        sample_resume,
+        job_description="Need Python, RAG, workflow automation and industrial AI.",
+        keywords=["Python", "RAG", "workflow automation", "industrial AI"],
+    )
+
+    assert '<span class="skill-category">Technical:</span>' in html
+    assert "Python" in html
+    assert "Industrial Automation (OPC Integration)" in html
+    assert "AI Model Fine-Tuning and Deployment" in html
+    assert "CLion" not in html
+    assert "Figma" not in html
+    assert "Unreal Engine" not in html
+    assert "VS Code" not in html
+
+
 def test_render_projects_preserves_bullets(sample_resume):
     html = _render_projects(sample_resume)
 
@@ -225,6 +253,26 @@ def test_render_projects_limits_bullets_to_four(sample_resume):
     ]
 
     html = _render_projects(sample_resume)
+
+    assert "<li>Bullet 1</li>" in html
+    assert "<li>Bullet 4</li>" in html
+    assert "<li>Bullet 5</li>" not in html
+
+
+def test_render_experience_limits_visible_bullets_to_four(sample_resume):
+    sample_resume["workExperience"][0]["description"] = [
+        "Bullet 1",
+        "Bullet 2",
+        "Bullet 3",
+        "Bullet 4",
+        "Bullet 5",
+    ]
+
+    html = render_resume_html(
+        sample_resume,
+        job_description="Need Python and FastAPI.",
+        keywords=["Python", "FastAPI"],
+    )
 
     assert "<li>Bullet 1</li>" in html
     assert "<li>Bullet 4</li>" in html
@@ -257,13 +305,13 @@ def test_postprocess_pdf_resume_reorders_more_relevant_experience_first(sample_r
     sample_resume["workExperience"].append(
         {
             "id": 3,
-            "title": "Technical Project Developer",
-            "company": "University Lab",
+            "title": "AI & Automation Developer",
+            "company": "Industrial AI Automation Project (Factory Collaboration)",
             "location": "Sydney NSW",
             "years": "2025 - Present",
             "description": [
-                "Built RAG workflow automation in Python.",
-                "Ran experiments with LLM evaluation loops.",
+                "Designed and trained an AI-based prediction model in Python.",
+                "Built workflow automation for industrial data pipelines.",
             ],
         }
     )
@@ -273,8 +321,8 @@ def test_postprocess_pdf_resume_reorders_more_relevant_experience_first(sample_r
         ["Python", "RAG", "workflow automation"],
     )
 
-    assert tailored.workExperience[0].title == "Technical Project Developer"
-    assert tailored.workExperience[0].company == "University Lab"
+    assert tailored.workExperience[0].title == "AI & Automation Developer"
+    assert tailored.workExperience[0].company == "Industrial AI Automation Project (Factory Collaboration)"
 
 
 def test_postprocess_pdf_resume_extracts_project_like_experience_into_projects(sample_resume):
@@ -303,7 +351,51 @@ def test_postprocess_pdf_resume_extracts_project_like_experience_into_projects(s
     assert tailored.personalProjects[0].name == "University Lab"
     assert tailored.personalProjects[0].role == "Technical Project Developer"
     assert "Built RAG workflow automation in Python." in tailored.personalProjects[0].description
-    assert any(item.company == "University Lab" for item in tailored.workExperience)
+    assert all(item.company != "University Lab" for item in tailored.workExperience)
+
+
+def test_postprocess_pdf_resume_moves_unsw_project_out_of_work_experience(sample_resume):
+    sample_resume["personalProjects"] = []
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Technical Project Developer",
+            "company": "University of New South Wales (UNSW)",
+            "location": "Sydney NSW, Australia",
+            "years": "2025 - Present",
+            "description": [
+                "Developed an intelligent WeChat customer service automation system based on RAG.",
+                "Extended the RAG framework to support full desktop UI automation using OpenClaw.",
+            ],
+        },
+        {
+            "id": 2,
+            "title": "AI & Automation Developer",
+            "company": "Industrial AI Automation Project (Factory Collaboration)",
+            "location": "Remote",
+            "years": "Dec 2025 - Feb 2026",
+            "description": [
+                "Designed and trained an AI-based prediction model for blast furnace airflow.",
+            ],
+        },
+        {
+            "id": 3,
+            "title": "Studio Operator",
+            "company": "Little Feast Studio",
+            "location": "Chengdu, China",
+            "years": "Aug 2018 - Aug 2024",
+            "description": ["Coordinated target customer feedback and helped improve team workflow."],
+        },
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["RAG", "AI", "automation", "workflow"],
+    )
+
+    assert all(item.company != "University of New South Wales (UNSW)" for item in tailored.workExperience)
+    assert any(item.company == "Industrial AI Automation Project (Factory Collaboration)" for item in tailored.workExperience)
+    assert any(project.name == "University of New South Wales (UNSW)" for project in tailored.personalProjects)
 
 
 def test_postprocess_pdf_resume_enriches_generic_summary_for_ai_profiles(sample_resume):
@@ -472,7 +564,8 @@ def test_postprocess_pdf_resume_prioritizes_rag_and_automation_project_bullets(s
         ["AI", "automation", "large language models", "workflow"],
     )
 
-    bullets = tailored.workExperience[0].description
+    unsw_project = next(project for project in tailored.personalProjects if project.name == "University of New South Wales (UNSW)")
+    bullets = unsw_project.description
     assert "RAG" in bullets[0] or "Retrieval-Augmented Generation" in bullets[0]
     assert "automation" in bullets[1].lower()
 
@@ -489,6 +582,8 @@ def test_postprocess_pdf_resume_pushes_low_signal_game_bullets_later(sample_resu
                 "Extended the RAG framework to support full desktop UI automation using OpenClaw.",
                 "Developed the multi-level interactive game Cat vs Dog using Unreal Engine as Lead Technical Developer.",
                 "Implemented NLP sentiment classification and computer vision models for text emotion detection and agricultural pest recognition.",
+                "Designed and prototyped legal consultation platform user flows for online legal assistance services.",
+                "Conducted exploratory data analysis on Airbnb datasets to uncover pricing dynamics.",
             ],
         }
     ]
@@ -498,9 +593,11 @@ def test_postprocess_pdf_resume_pushes_low_signal_game_bullets_later(sample_resu
         ["AI", "automation", "computer vision", "workflow"],
     )
 
-    bullets = tailored.workExperience[0].description
+    unsw_project = next(project for project in tailored.personalProjects if project.name == "University of New South Wales (UNSW)")
+    bullets = unsw_project.description
     assert "Unreal Engine" not in bullets[0]
     assert "Unreal Engine" not in bullets[1]
+    assert all("Unreal Engine" not in bullet for bullet in bullets[:4])
 
 
 def test_postprocess_pdf_resume_prioritizes_model_delivery_before_supporting_pipeline_bullets(sample_resume):
