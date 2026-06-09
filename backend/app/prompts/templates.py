@@ -309,7 +309,7 @@ Rules:
 - For non-software or brand-facing roles, reinterpret the experience in terms of transferable software/AI value where supported by the resume: cross-functional collaboration, stakeholder communication, workflow improvement, experimentation, analytics, delivery ownership, and customer insight.
 - If the candidate has AI, automation, analytics, or data work, elevate the framing using senior engineering language already supported by the source material, such as pipelines, retrieval, orchestration, evaluation, reliability, integration, and decision support.
 - For project and internship bullets, use professional action verbs and avoid weak openings such as worked on, helped, made, used; keep contributor-level wording when the source only says assisted or participated, and do not overstate ownership.
-- Keep projects segmented and scannable with 2-4 concise bullets per project instead of merged paragraphs.
+- Keep projects segmented and scannable with 3-5 concise bullets per strong project instead of merged paragraphs; prioritize architecture, integration, evaluation, data handling, collaboration, and outcome evidence before UI/demo-only details.
 - For customSections: preserve exact structure, item count, titles, subtitles, and years. If an item's description is an empty array [] in the original, keep it empty []. Do NOT generate descriptions for items that had none.
 - Improve custom section content the same way as standard sections
 - Copy the "years" field values EXACTLY as they appear in the original resume (including any month prefixes like "Jan 2020 - Present"). Do not shorten, reformat, or drop months.

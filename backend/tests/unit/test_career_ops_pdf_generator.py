@@ -235,6 +235,19 @@ def test_render_resume_html_filters_low_signal_bottom_skills(sample_resume):
     assert "VS Code" not in html
 
 
+def test_render_resume_html_hides_certifications_section_when_empty(sample_resume):
+    sample_resume["additional"]["certificationsTraining"] = []
+
+    html = render_resume_html(
+        sample_resume,
+        job_description="Need Python and AI workflow automation.",
+        keywords=["Python", "AI", "workflow automation"],
+    )
+
+    assert "Certifications" not in html
+    assert "No certifications provided" not in html
+
+
 def test_render_projects_preserves_bullets(sample_resume):
     html = _render_projects(sample_resume)
 
@@ -244,20 +257,22 @@ def test_render_projects_preserves_bullets(sample_resume):
     assert "<li>500+ GitHub stars, used by 30+ companies</li>" in html
 
 
-def test_render_projects_limits_bullets_to_four(sample_resume):
+def test_render_projects_limits_bullets_to_five(sample_resume):
     sample_resume["personalProjects"][0]["description"] = [
         "Bullet 1",
         "Bullet 2",
         "Bullet 3",
         "Bullet 4",
         "Bullet 5",
+        "Bullet 6",
     ]
 
     html = _render_projects(sample_resume)
 
     assert "<li>Bullet 1</li>" in html
     assert "<li>Bullet 4</li>" in html
-    assert "<li>Bullet 5</li>" not in html
+    assert "<li>Bullet 5</li>" in html
+    assert "<li>Bullet 6</li>" not in html
 
 
 def test_render_experience_limits_visible_bullets_to_four(sample_resume):
@@ -627,6 +642,37 @@ def test_postprocess_pdf_resume_pushes_low_signal_game_bullets_later(sample_resu
     assert all("Unreal Engine" not in bullet for bullet in bullets[:4])
 
 
+def test_postprocess_pdf_resume_keeps_five_strong_project_bullets(sample_resume):
+    sample_resume["personalProjects"] = []
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Technical Project Developer",
+            "company": "University of New South Wales (UNSW)",
+            "location": "Sydney NSW",
+            "years": "2025 - Present",
+            "description": [
+                "Developed an intelligent WeChat customer service automation system based on RAG.",
+                "Extended the RAG framework to support full desktop UI automation using OpenClaw.",
+                "Implemented NLP sentiment classification and computer vision models for text emotion detection and agricultural pest recognition.",
+                "Designed and prototyped legal consultation platform user flows for online legal assistance services.",
+                "Conducted exploratory data analysis on Airbnb datasets to uncover pricing dynamics and booking patterns.",
+                "Developed the multi-level interactive game Cat vs Dog using Unreal Engine.",
+            ],
+        }
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["RAG", "workflow automation", "NLP", "computer vision", "data analysis"],
+    )
+
+    project = next(project for project in tailored.personalProjects if project.name == "University of New South Wales (UNSW)")
+    assert len(project.description) == 5
+    assert any("exploratory data analysis" in bullet for bullet in project.description)
+    assert all("Unreal Engine" not in bullet for bullet in project.description)
+
+
 def test_postprocess_pdf_resume_omits_low_signal_project_bullets_when_stronger_ai_evidence_exists(sample_resume):
     sample_resume["personalProjects"] = []
     sample_resume["workExperience"] = [
@@ -739,6 +785,104 @@ def test_postprocess_pdf_resume_professionalizes_academic_project_bullets(sample
     assert "Developed a RAG chatbot for student questions." in project.description
     assert "Implemented Python scripts to evaluate answer quality." in project.description
     assert "Collaborated with 3 teammates to test the solution with users." in project.description
+
+
+def test_postprocess_pdf_resume_omits_single_bullet_low_relevance_role_for_mismatched_jd(sample_resume):
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "AI & Automation Developer",
+            "company": "Industrial AI Automation Project",
+            "location": "Remote",
+            "years": "2025",
+            "description": [
+                "Developed an AI-based prediction model using industrial OPC data.",
+                "Built Python automation scripts for model training workflows.",
+            ],
+        },
+        {
+            "id": 2,
+            "title": "Founder & Operator",
+            "company": "Independent Retail Brand",
+            "location": "",
+            "years": "",
+            "description": [
+                "Founded and operated an independent retail brand, designing original products and identifying consumer trends.",
+            ],
+        },
+        {
+            "id": 3,
+            "title": "Studio Operator",
+            "company": "Little Feast Studio",
+            "location": "Chengdu",
+            "years": "2018 - 2024",
+            "description": [
+                "Coordinated customer feedback loops and improved team workflows.",
+                "Led social media content operations across multiple channels.",
+            ],
+        },
+    ]
+    sample_resume["personalProjects"] = [
+        {
+            "id": 1,
+            "name": "RAG Customer Service Automation",
+            "role": "Developer",
+            "years": "2025",
+            "description": [
+                "Developed a RAG customer service automation system.",
+            ],
+        }
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["AI Engineer", "LLM", "workflow automation", "Python"],
+    )
+
+    assert all("Independent Retail Brand" not in item.company for item in tailored.workExperience)
+    assert any(item.company == "Little Feast Studio" for item in tailored.workExperience)
+
+
+def test_postprocess_pdf_resume_keeps_role_when_it_matches_non_technical_jd(sample_resume):
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Founder & Operator",
+            "company": "Independent Retail Brand",
+            "location": "",
+            "years": "",
+            "description": [
+                "Founded and operated an independent retail brand, designing original products and identifying consumer trends.",
+            ],
+        },
+        {
+            "id": 2,
+            "title": "Content Studio Operator",
+            "company": "Little Feast Studio",
+            "location": "Chengdu",
+            "years": "2018 - 2024",
+            "description": [
+                "Managed social media content operations and audience feedback loops.",
+            ],
+        },
+        {
+            "id": 3,
+            "title": "Customer Service Assistant",
+            "company": "Local Cafe",
+            "location": "Sydney",
+            "years": "2023",
+            "description": [
+                "Handled customer enquiries and supported daily operations.",
+            ],
+        },
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["retail brand", "consumer trends", "social media", "customer insights"],
+    )
+
+    assert any(item.company == "Independent Retail Brand" for item in tailored.workExperience)
 
 
 def test_postprocess_pdf_resume_does_not_force_ai_summary_for_non_ai_jd(sample_resume):

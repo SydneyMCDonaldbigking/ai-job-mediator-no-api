@@ -168,6 +168,28 @@ _IMPACT_TERMS = (
     "coordinated",
     "streamlined",
 )
+_TRANSFERABLE_WORK_TERMS = (
+    "stakeholder",
+    "client",
+    "customer feedback",
+    "customer enquiry",
+    "customer enquiries",
+    "team",
+    "collaborated",
+    "cross-functional",
+    "workflow",
+    "operations",
+    "analytics",
+    "data",
+    "trained",
+    "training",
+    "managed",
+    "led",
+    "coordinated",
+    "communication",
+    "requirements",
+    "process improvement",
+)
 _METRIC_RE = re.compile(r"(\d+[%+]|\$\d+|\d+\s?(k|m|b)|\d+\s?(x|hours|days|weeks|months|users|requests))", re.IGNORECASE)
 
 
@@ -587,6 +609,18 @@ def _render_competencies(resume: ResumeData | dict | str, keywords: list[str]) -
     )
 
 
+def _render_section(title: str, body: str) -> str:
+    clean_body = _compact_whitespace(body)
+    if not clean_body:
+        return ""
+    return f"""
+<div class="section">
+  <div class="section-title">{escape(_compact_whitespace(title))}</div>
+  {body}
+</div>
+""".strip()
+
+
 def _render_experience(resume: ResumeData) -> str:
     if not resume.workExperience:
         return '<div class="job"><div class="job-role">No structured experience provided.</div></div>'
@@ -639,6 +673,34 @@ def _is_academic_project_experience(title: str, company: str) -> bool:
     )
 
 
+def _is_low_relevance_work_experience(job: dict[str, object], keyword_targets: list[str]) -> bool:
+    title = str(job.get("title", ""))
+    company = str(job.get("company", ""))
+    descriptions = [
+        _compact_whitespace(str(item))
+        for item in job.get("description", [])
+        if _compact_whitespace(str(item))
+    ]
+    if len(descriptions) > 1:
+        return False
+
+    evidence_text = f"{title} {company} {' '.join(descriptions)}"
+    keyword_hits = sum(
+        1
+        for keyword in keyword_targets
+        if _compact_whitespace(keyword)
+        and _contains_term(evidence_text, _compact_whitespace(keyword))
+    )
+    if keyword_hits:
+        return False
+
+    has_transferable_evidence = _has_any_term(evidence_text, _TRANSFERABLE_WORK_TERMS)
+    if has_transferable_evidence:
+        return False
+
+    return True
+
+
 def _project_like_entries(resume: ResumeData) -> list:
     return [
         item
@@ -656,7 +718,7 @@ def _render_projects(resume: ResumeData | dict | str) -> str:
     for item in resume.personalProjects:
         bullets = "\n".join(
             f"<li>{escape(_compact_whitespace(bullet))}</li>"
-            for bullet in item.description[:4]
+            for bullet in item.description[:5]
             if _compact_whitespace(bullet)
         ) or "<li>No project highlights provided.</li>"
         projects.append(
@@ -699,7 +761,7 @@ def _render_education(resume: ResumeData) -> str:
 def _render_certifications(resume: ResumeData) -> str:
     certifications = resume.additional.certificationsTraining
     if not certifications:
-        return '<div class="cert-item"><div class="cert-title">No certifications provided.</div></div>'
+        return ""
 
     return "\n".join(
         f"""
@@ -764,7 +826,10 @@ def render_resume_html(
         "{{EXPERIENCE}}": _render_experience(normalized_resume),
         "{{PROJECTS}}": _render_projects(normalized_resume),
         "{{EDUCATION}}": _render_education(normalized_resume),
-        "{{CERTIFICATIONS}}": _render_certifications(normalized_resume),
+        "{{CERTIFICATIONS_SECTION}}": _render_section(
+            "Certifications",
+            _render_certifications(normalized_resume),
+        ),
         "{{SKILLS}}": _render_skills(normalized_resume, keyword_targets),
     }
 
@@ -900,6 +965,15 @@ def _postprocess_pdf_resume(
 
     work_experience = payload.get("workExperience", [])
     if work_experience:
+        if len(work_experience) > 2:
+            filtered_work_experience = [
+                job for job in work_experience
+                if not _is_low_relevance_work_experience(job, keyword_targets)
+            ]
+            if filtered_work_experience:
+                work_experience = filtered_work_experience
+                payload["workExperience"] = work_experience
+
         academic_project_entries = [
             job for job in work_experience
             if _is_academic_project_experience(str(job.get("title", "")), str(job.get("company", "")))
@@ -935,7 +1009,7 @@ def _postprocess_pdf_resume(
                 "name": str(job.get("company", "")).strip() or f"Project {index + 1}",
                 "role": str(job.get("title", "")).strip(),
                 "years": str(job.get("years", "")).strip(),
-                "description": descriptions[:4],
+                "description": descriptions[:5],
             }
 
         if not payload.get("personalProjects") and academic_project_entries:

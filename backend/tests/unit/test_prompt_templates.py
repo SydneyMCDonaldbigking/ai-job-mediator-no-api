@@ -13,7 +13,8 @@ def test_keyword_prompt_guides_transferable_software_framing():
 def test_full_prompt_guides_project_segmentation_and_quantification():
     prompt = IMPROVE_RESUME_PROMPTS["full"]
 
-    assert "2-4 concise bullets per project" in prompt
+    assert "3-5 concise bullets per strong project" in prompt
+    assert "architecture, integration, evaluation, data handling" in prompt
     assert "quantified outcomes" in prompt
     assert "Australian-style resume writing" in prompt
 
