@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 from app.career_ops.pdf_generator import (
     _heuristic_tailor_resume,
     _postprocess_pdf_resume,
+    _select_competencies,
     _tailor_resume,
     _render_competencies,
     _render_projects,
@@ -396,6 +397,7 @@ def test_postprocess_pdf_resume_moves_unsw_project_out_of_work_experience(sample
     assert all(item.company != "University of New South Wales (UNSW)" for item in tailored.workExperience)
     assert any(item.company == "Industrial AI Automation Project (Factory Collaboration)" for item in tailored.workExperience)
     assert any(project.name == "University of New South Wales (UNSW)" for project in tailored.personalProjects)
+    assert all(project.name != "Industrial AI Automation Project (Factory Collaboration)" for project in tailored.personalProjects)
 
 
 def test_postprocess_pdf_resume_enriches_generic_summary_for_ai_profiles(sample_resume):
@@ -543,6 +545,31 @@ def test_postprocess_pdf_resume_reframes_llm_written_studio_bullets(sample_resum
     assert bullets[1] == "Led a social media team delivering content operations and community engagement across multiple channels."
 
 
+def test_postprocess_pdf_resume_uses_generic_workflow_wording_for_non_content_roles(sample_resume):
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Cafe Supervisor",
+            "company": "Northside Cafe",
+            "location": "Melbourne VIC",
+            "years": "2021 - 2024",
+            "description": [
+                "Coordinated customer feedback and helped improve team workflow.",
+                "Managed rosters and trained junior staff.",
+            ],
+        }
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["stakeholder", "workflow", "operations"],
+    )
+
+    bullets = tailored.workExperience[0].description
+    assert bullets[0] == "Coordinated customer feedback loops and streamlined team workflows to improve operational consistency."
+    assert "content relevance" not in bullets[0]
+
+
 def test_postprocess_pdf_resume_prioritizes_rag_and_automation_project_bullets(sample_resume):
     sample_resume["workExperience"] = [
         {
@@ -600,6 +627,36 @@ def test_postprocess_pdf_resume_pushes_low_signal_game_bullets_later(sample_resu
     assert all("Unreal Engine" not in bullet for bullet in bullets[:4])
 
 
+def test_postprocess_pdf_resume_omits_low_signal_project_bullets_when_stronger_ai_evidence_exists(sample_resume):
+    sample_resume["personalProjects"] = []
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Technical Project Developer",
+            "company": "Monash University AI Lab",
+            "location": "Melbourne VIC",
+            "years": "2024",
+            "description": [
+                "Developed a RAG assistant for student services using vector retrieval and LLM APIs.",
+                "Implemented model evaluation scripts for answer quality and hallucination checks.",
+                "Built a small Unity game prototype for a class demo.",
+                "Designed Figma screens for the project presentation.",
+            ],
+        }
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["RAG", "LLM", "model evaluation", "workflow automation"],
+    )
+
+    project = next(project for project in tailored.personalProjects if project.name == "Monash University AI Lab")
+    assert any("RAG assistant" in bullet for bullet in project.description)
+    assert any("model evaluation" in bullet for bullet in project.description)
+    assert all("Unity" not in bullet for bullet in project.description)
+    assert all("Figma" not in bullet for bullet in project.description)
+
+
 def test_postprocess_pdf_resume_prioritizes_model_delivery_before_supporting_pipeline_bullets(sample_resume):
     sample_resume["workExperience"] = [
         {
@@ -624,6 +681,153 @@ def test_postprocess_pdf_resume_prioritizes_model_delivery_before_supporting_pip
     bullets = tailored.workExperience[0].description
     assert bullets[0] == "Designed and trained an AI-based prediction model for blast furnace airflow using industrial OPC data to enhance process monitoring."
     assert bullets[1] == "Applied machine learning techniques to analyse operational parameters, improving prediction accuracy and supporting real-time decision making."
+
+
+def test_postprocess_pdf_resume_professionalizes_internship_bullets(sample_resume):
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Software Engineering Intern",
+            "company": "Campus Services Platform",
+            "location": "Sydney NSW",
+            "years": "2025",
+            "description": [
+                "worked on a Python API for student bookings.",
+                "helped debug SQL problems and fixed some bugs.",
+                "made docs for deployment.",
+            ],
+        }
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["Python", "API", "SQL", "debugging", "deployment"],
+    )
+
+    bullets = tailored.workExperience[0].description
+    assert "Worked on" not in " ".join(bullets)
+    assert "helped debug" not in " ".join(bullets).casefold()
+    assert "made docs" not in " ".join(bullets).casefold()
+    assert "Contributed to development of a Python API for student bookings." in bullets
+    assert "Supported debugging of SQL issues and resolved defects." in bullets
+    assert "Prepared deployment documentation." in bullets
+
+
+def test_postprocess_pdf_resume_professionalizes_academic_project_bullets(sample_resume):
+    sample_resume["personalProjects"] = []
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Technical Project Developer",
+            "company": "University AI Lab",
+            "location": "Sydney NSW",
+            "years": "2025",
+            "description": [
+                "made a RAG chatbot for student questions.",
+                "used Python scripts to check answers.",
+                "worked with 3 teammates to test it with users.",
+            ],
+        }
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["RAG", "Python", "model evaluation", "user testing", "collaboration"],
+    )
+
+    project = next(project for project in tailored.personalProjects if project.name == "University AI Lab")
+    assert "Developed a RAG chatbot for student questions." in project.description
+    assert "Implemented Python scripts to evaluate answer quality." in project.description
+    assert "Collaborated with 3 teammates to test the solution with users." in project.description
+
+
+def test_postprocess_pdf_resume_does_not_force_ai_summary_for_non_ai_jd(sample_resume):
+    sample_resume["summary"] = (
+        "Graduate IT student with experience in user-centred design, workflow mapping, "
+        "and stakeholder communication."
+    )
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Machine Learning Intern",
+            "company": "RetailOps Analytics",
+            "location": "Sydney NSW",
+            "years": "2025",
+            "description": [
+                "Developed a churn prediction model in scikit-learn and presented model trade-offs to product stakeholders.",
+            ],
+        }
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["user-centred design", "workflow mapping", "prototyping"],
+    )
+
+    assert "Brings hands-on experience delivering AI" not in tailored.summary
+
+
+def test_select_competencies_prioritizes_ux_skills_over_ai_evidence_for_ux_jd(sample_resume):
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Technical Project Developer",
+            "company": "University AI Lab",
+            "location": "Sydney NSW",
+            "years": "2025",
+            "description": [
+                "Developed a RAG assistant using vector retrieval and LLM APIs.",
+                "Implemented model evaluation scripts for answer quality checks.",
+                "Worked with designers to translate Figma prototypes into responsive user flows.",
+            ],
+        }
+    ]
+    sample_resume["additional"]["technicalSkills"] = [
+        "Python",
+        "RAG",
+        "LLM APIs",
+        "User-Centred Design",
+        "Stakeholder Communication",
+        "Prototyping",
+        "Product Thinking",
+        "Figma",
+        "React",
+        "SQL",
+    ]
+
+    competencies = _select_competencies(
+        sample_resume,
+        ["user-centred design", "stakeholder communication", "prototyping", "product thinking", "Figma"],
+        limit=8,
+    )
+
+    assert competencies[:5] == [
+        "User-Centred Design",
+        "Stakeholder Communication",
+        "Prototyping",
+        "Product Thinking",
+        "Figma",
+    ]
+    assert "RAG Workflow Automation" not in competencies[:6]
+    assert "LLM Solution Prototyping" not in competencies[:6]
+
+
+def test_postprocess_pdf_resume_limits_summary_to_three_sentences(sample_resume):
+    sample_resume["summary"] = (
+        "Graduate IT student with user-centred design experience. "
+        "Skilled in stakeholder communication and prototyping. "
+        "Works with engineers to improve workflows. "
+        "Also has broad AI automation experience. "
+        "Enjoys learning new tools quickly."
+    )
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["user-centred design", "stakeholder communication", "prototyping"],
+    )
+
+    assert tailored.summary.count(".") <= 3
+    assert "Also has broad AI automation experience" not in tailored.summary
 
 
 @patch("app.career_ops.pdf_generator.extract_job_keywords_llm", new_callable=AsyncMock)
@@ -654,6 +858,52 @@ async def test_tailor_resume_uses_full_prompt_for_pdf(
     await _tailor_resume(render_resume_html.__globals__["coerce_resume_data"](sample_resume), "Need Python and RAG automation.")
 
     assert mock_improve_resume.await_args.kwargs["prompt_id"] == "full"
+
+
+@patch("app.career_ops.pdf_generator.extract_job_keywords_llm", new_callable=AsyncMock)
+@patch("app.career_ops.pdf_generator.improve_resume", new_callable=AsyncMock)
+async def test_tailor_resume_uses_structured_job_keywords_for_pdf_targets(
+    mock_improve_resume,
+    mock_extract_keywords,
+    sample_resume,
+):
+    mock_extract_keywords.return_value = {
+        "required_skills": ["User-Centred Design", "Prototyping"],
+        "preferred_skills": ["Stakeholder Communication"],
+        "experience_requirements": [],
+        "education_requirements": [],
+        "key_responsibilities": ["workflow mapping", "usability feedback"],
+        "keywords": ["Product Thinking", "Collaboration"],
+    }
+    mock_improve_resume.return_value = {
+        "summary": sample_resume["summary"],
+        "workExperience": sample_resume["workExperience"],
+        "education": sample_resume["education"],
+        "personalProjects": sample_resume["personalProjects"],
+        "additional": {
+            **sample_resume["additional"],
+            "technicalSkills": [
+                "Python",
+                "RAG",
+                "User-Centred Design",
+                "Prototyping",
+                "Stakeholder Communication",
+            ],
+        },
+        "customSections": sample_resume["customSections"],
+        "sectionMeta": sample_resume["sectionMeta"],
+    }
+
+    _tailored, keyword_targets = await _tailor_resume(
+        render_resume_html.__globals__["coerce_resume_data"](sample_resume),
+        "SEEK UX Designer. Design real-world workflows used daily and own UX.",
+    )
+
+    assert keyword_targets[:3] == [
+        "User-Centred Design",
+        "Prototyping",
+        "Stakeholder Communication",
+    ]
 
 
 @patch("app.career_ops.pdf_generator.verify_diff_result")
