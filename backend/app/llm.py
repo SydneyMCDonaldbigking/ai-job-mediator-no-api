@@ -38,6 +38,21 @@ LLM_HEALTH_CHECK_RETRY_DELAY_SECONDS = 1
 # JSON-010: JSON extraction safety limits
 MAX_JSON_EXTRACTION_RECURSION = 10
 MAX_JSON_CONTENT_SIZE = 1024 * 1024  # 1MB
+_COMMON_MOJIBAKE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("‑", "-"),
+    ("–", "-"),
+    ("—", "-"),
+    ("鈥檚", "'s"),
+    ("鈥檓", "'m"),
+    ("鈥檙e", "'re"),
+    ("鈥檝e", "'ve"),
+    ("鈥檇", "'d"),
+    ("鈥檒l", "'ll"),
+    ("鈥憃", "-o"),
+    ("鈥憏", "-y"),
+    ("鈥疜", "K"),
+    ("鈥", "-"),
+)
 
 
 class LLMConfig(BaseModel):
@@ -196,6 +211,25 @@ def _to_code_block(content: str | None, language: str = "text") -> str:
     if not text:
         text = "<empty>"
     return f"```{language}\n{text}\n```"
+
+
+def _sanitize_llm_text(text: str) -> str:
+    """Repair common mojibake fragments in model output without touching normal CJK text."""
+    cleaned = text
+    for source, target in _COMMON_MOJIBAKE_REPLACEMENTS:
+        cleaned = cleaned.replace(source, target)
+    return cleaned
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    """Recursively sanitize string values inside JSON-like structures."""
+    if isinstance(value, str):
+        return _sanitize_llm_text(value)
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_json_value(item) for key, item in value.items()}
+    return value
 
 
 def _is_transient_health_check_error(message: str) -> bool:
@@ -687,7 +721,7 @@ async def complete(
                 content = _strip_thinking_tags(content)
                 if not content:
                     raise ValueError("Response contained only thinking content, no output")
-            return content
+            return _sanitize_llm_text(content)
         except Exception as e:
             last_error = e
             logging.error(
@@ -969,6 +1003,7 @@ async def complete_json(
             # Extract and parse JSON
             json_str = _extract_json(content)
             result = json.loads(json_str)
+            result = _sanitize_json_value(result)
 
             # LLM-001: Check if parsed result appears truncated
             if isinstance(result, dict) and _appears_truncated(result):
@@ -1064,6 +1099,7 @@ async def _complete_json_with_fallback_chain(
 
                 json_str = _extract_json(content)
                 result = json.loads(json_str)
+                result = _sanitize_json_value(result)
 
                 if isinstance(result, dict) and _appears_truncated(result):
                     if attempt < retries:

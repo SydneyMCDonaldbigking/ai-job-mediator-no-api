@@ -18,9 +18,9 @@
 
   body {
     font-family: Arial, Helvetica, sans-serif;
-    font-size: 10.6px;
-    line-height: 1.48;
-    color: #172033;
+    font-size: 10.7px;
+    line-height: 1.5;
+    color: #202124;
     background: #ffffff;
   }
 
@@ -31,18 +31,18 @@
   }
 
   .header {
-    border-bottom: 2px solid #172033;
-    padding-bottom: 10px;
-    margin-bottom: 16px;
+    padding-bottom: 12px;
+    margin-bottom: 15px;
+    border-bottom: 1.5px solid #202124;
   }
 
   .header h1 {
-    font-size: 28px;
-    line-height: 1;
+    font-size: 27px;
+    line-height: 1.05;
     font-weight: 800;
-    letter-spacing: -0.035em;
-    color: #0f172a;
-    margin-bottom: 8px;
+    letter-spacing: 0.01em;
+    color: #111827;
+    margin-bottom: 7px;
   }
 
   .header-gradient {
@@ -50,49 +50,52 @@
   }
 
   .contact-row {
-    color: #475569;
-    font-size: 9.8px;
+    color: #515a67;
+    font-size: 9.7px;
     line-height: 1.35;
     word-break: break-word;
   }
 
   .separator {
-    color: #9aa6b2;
+    color: #a3abb5;
     padding: 0 5px;
   }
 
   .section {
-    margin-bottom: 15px;
+    border-left: 2px solid #d5dce5;
+    padding-left: 12px;
+    margin-bottom: 14px;
   }
 
   .section-title {
-    color: #0f766e;
-    font-size: 10.4px;
+    color: #111827;
+    font-size: 10.1px;
     font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
-    border-bottom: 1px solid #d7dde6;
-    padding-bottom: 4px;
-    margin-bottom: 8px;
+    letter-spacing: 0.14em;
+    margin-bottom: 7px;
   }
 
   .summary-text {
-    color: #1f2937;
+    color: #2f3742;
     line-height: 1.58;
   }
 
   .competencies-grid {
     display: flex;
     flex-wrap: wrap;
-    gap: 5px 10px;
+    gap: 3px 9px;
   }
 
   .competency-tag {
-    color: #172033;
+    color: #2f3742;
     font-size: 9.6px;
     font-weight: 700;
-    border-bottom: 1px solid #b8c3cf;
-    padding-bottom: 1px;
+  }
+
+  .competency-tag::after {
+    content: ";";
+    color: #8b95a1;
   }
 
   .job,
@@ -118,14 +121,14 @@
 
   .job-company,
   .project-title {
-    font-size: 11.5px;
+    font-size: 11.4px;
     font-weight: 800;
-    color: #0f172a;
+    color: #111827;
   }
 
   .job-period,
   .edu-year {
-    color: #5f6f82;
+    color: #667085;
     font-size: 9.4px;
     white-space: nowrap;
   }
@@ -135,33 +138,33 @@
   .cert-title,
   .skill-category {
     font-weight: 800;
-    color: #172033;
+    color: #202124;
   }
 
   .job-role {
-    color: #0f766e;
+    color: #394150;
     margin-top: 1px;
   }
 
   .job-location,
   .edu-desc,
   .project-tech {
-    color: #64748b;
+    color: #667085;
     font-size: 9.4px;
   }
 
   .job ul,
   .project ul {
     margin-top: 5px;
-    padding-left: 16px;
+    padding-left: 15px;
   }
 
   .job li,
   .project li,
   .skill-item {
-    color: #1f2937;
+    color: #2f3742;
     font-size: 10px;
-    line-height: 1.45;
+    line-height: 1.46;
     margin-bottom: 3px;
   }
 
@@ -171,13 +174,11 @@
 
   .project-badge {
     display: inline-block;
-    font-size: 8.4px;
+    font-size: 8.2px;
     font-weight: 800;
-    color: #475569;
-    background: #f1f5f9;
-    border: 1px solid #dbe3eb;
-    border-radius: 3px;
-    padding: 1px 5px;
+    color: #667085;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     margin-left: 5px;
     vertical-align: 1px;
   }
@@ -187,7 +188,7 @@
   }
 
   .edu-org {
-    color: #0f766e;
+    color: #394150;
   }
 
   @media print {
