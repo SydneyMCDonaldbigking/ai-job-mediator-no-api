@@ -17,9 +17,9 @@ from app.career_ops.market_data import (
 )
 from app.career_ops.pdf_generator import (
     generate_tailored_resume_pdf,
-    normalize_text_for_ats,
-    render_resume_html,
 )
+from app.career_ops.resume_renderer import render_resume_html
+from app.career_ops.resume_text import normalize_text_for_ats
 from app.career_ops.scanner import (
     build_title_filter,
     detect_api,
@@ -27,6 +27,16 @@ from app.career_ops.scanner import (
     load_portals_config,
     save_portals_config,
     scan_portals,
+)
+from app.career_ops.tailoring_intelligence import (
+    JOB_TYPE_AI_ML,
+    JOB_TYPE_DATA_ANALYTICS,
+    JOB_TYPE_OPERATIONS_CUSTOMER,
+    JOB_TYPE_SOFTWARE,
+    JOB_TYPE_UX_PRODUCT,
+    build_resume_evidence_map,
+    classify_resume_entry,
+    infer_job_profile,
 )
 
 __all__ = [
@@ -50,4 +60,12 @@ __all__ = [
     "load_portals_config",
     "save_portals_config",
     "scan_portals",
+    "JOB_TYPE_AI_ML",
+    "JOB_TYPE_DATA_ANALYTICS",
+    "JOB_TYPE_OPERATIONS_CUSTOMER",
+    "JOB_TYPE_SOFTWARE",
+    "JOB_TYPE_UX_PRODUCT",
+    "build_resume_evidence_map",
+    "classify_resume_entry",
+    "infer_job_profile",
 ]

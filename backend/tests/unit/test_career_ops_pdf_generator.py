@@ -4,9 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.career_ops.pdf_generator import (
+    _TEMPLATE_FILES,
     _heuristic_tailor_resume,
     _postprocess_pdf_resume,
     _select_competencies,
+    _select_resume_template,
     _tailor_resume,
     _render_competencies,
     _render_projects,
@@ -47,6 +49,66 @@ def test_render_resume_html_contains_resume_sections(sample_resume):
     assert "Core Competencies" in html
     assert "Python" in html
     assert "{{NAME}}" not in html
+
+
+def test_render_resume_html_can_force_resume_template(sample_resume):
+    html = render_resume_html(
+        resume=sample_resume,
+        job_description="Need Python, FastAPI, Docker and AWS experience.",
+        keywords=["Python", "FastAPI", "Docker", "AWS"],
+        template_name="compact",
+    )
+
+    assert 'data-template="compact"' in html
+    assert "grid-template-columns: 34% 1fr" in html
+    assert "Jane Doe" in html
+    assert "{{TEMPLATE_NAME}}" not in html
+
+
+def test_select_resume_template_uses_env_override(monkeypatch):
+    monkeypatch.setenv("RESUME_TEMPLATE", "executive")
+
+    selected_template, template_path = _select_resume_template()
+
+    assert selected_template == "executive"
+    assert template_path == _TEMPLATE_FILES["executive"]
+
+
+@patch("app.career_ops.resume_renderer.random.choice")
+def test_select_resume_template_randomizes_by_default(mock_choice, monkeypatch):
+    monkeypatch.delenv("RESUME_TEMPLATE", raising=False)
+    mock_choice.return_value = "modern"
+
+    selected_template, template_path = _select_resume_template()
+
+    mock_choice.assert_called_once()
+    assert selected_template == "modern"
+    assert template_path == _TEMPLATE_FILES["modern"]
+
+
+def test_pdf_generator_keeps_candidate_content_out_of_source_code():
+    import app.career_ops.pdf_generator as pdf_generator
+
+    source = pdf_generator.Path(pdf_generator.__file__).read_text(encoding="utf-8")
+
+    assert "TIANQI" not in source
+    assert "Little Feast" not in source
+    assert "Cat vs Dog" not in source
+
+
+def test_all_resume_templates_render_without_leftover_placeholders(sample_resume):
+    for template_name in _TEMPLATE_FILES:
+        html = render_resume_html(
+            resume=sample_resume,
+            job_description="Need Python, FastAPI, Docker and AWS experience.",
+            keywords=["Python", "FastAPI", "Docker", "AWS"],
+            template_name=template_name,
+        )
+
+        assert f'data-template="{template_name}"' in html
+        assert "{{" not in html
+        assert "Jane Doe" in html
+        assert "Professional Summary" in html
 
 
 def test_restore_protected_fields_keeps_personal_info(sample_resume):
@@ -207,7 +269,7 @@ def test_render_competencies_prioritizes_ai_evidence_over_generic_tail_items(sam
     assert "Computer Vision Models" in html
 
 
-def test_render_resume_html_filters_low_signal_bottom_skills(sample_resume):
+def test_render_resume_html_preserves_full_skills_section(sample_resume):
     sample_resume["additional"]["technicalSkills"] = [
         "Python",
         "C",
@@ -229,10 +291,12 @@ def test_render_resume_html_filters_low_signal_bottom_skills(sample_resume):
     assert "Python" in html
     assert "Industrial Automation (OPC Integration)" in html
     assert "AI Model Fine-Tuning and Deployment" in html
-    assert "CLion" not in html
-    assert "Figma" not in html
-    assert "Unreal Engine" not in html
-    assert "VS Code" not in html
+    assert '<span class="competency-tag">C</span>' not in html
+    assert '<span class="competency-tag">Figma</span>' not in html
+    assert "CLion" in html
+    assert "Figma" in html
+    assert "Unreal Engine" in html
+    assert "VS Code" in html
 
 
 def test_render_resume_html_hides_certifications_section_when_empty(sample_resume):
@@ -257,7 +321,7 @@ def test_render_projects_preserves_bullets(sample_resume):
     assert "<li>500+ GitHub stars, used by 30+ companies</li>" in html
 
 
-def test_render_projects_limits_bullets_to_five(sample_resume):
+def test_render_projects_preserves_all_bullets(sample_resume):
     sample_resume["personalProjects"][0]["description"] = [
         "Bullet 1",
         "Bullet 2",
@@ -272,10 +336,10 @@ def test_render_projects_limits_bullets_to_five(sample_resume):
     assert "<li>Bullet 1</li>" in html
     assert "<li>Bullet 4</li>" in html
     assert "<li>Bullet 5</li>" in html
-    assert "<li>Bullet 6</li>" not in html
+    assert "<li>Bullet 6</li>" in html
 
 
-def test_render_experience_limits_visible_bullets_to_four(sample_resume):
+def test_render_experience_preserves_all_bullets(sample_resume):
     sample_resume["workExperience"][0]["description"] = [
         "Bullet 1",
         "Bullet 2",
@@ -292,7 +356,7 @@ def test_render_experience_limits_visible_bullets_to_four(sample_resume):
 
     assert "<li>Bullet 1</li>" in html
     assert "<li>Bullet 4</li>" in html
-    assert "<li>Bullet 5</li>" not in html
+    assert "<li>Bullet 5</li>" in html
 
 
 def test_render_projects_falls_back_to_project_like_experience(sample_resume):
@@ -668,12 +732,12 @@ def test_postprocess_pdf_resume_keeps_five_strong_project_bullets(sample_resume)
     )
 
     project = next(project for project in tailored.personalProjects if project.name == "University of New South Wales (UNSW)")
-    assert len(project.description) == 5
+    assert len(project.description) == 6
     assert any("exploratory data analysis" in bullet for bullet in project.description)
-    assert all("Unreal Engine" not in bullet for bullet in project.description)
+    assert any("Unreal Engine" in bullet for bullet in project.description)
 
 
-def test_postprocess_pdf_resume_omits_low_signal_project_bullets_when_stronger_ai_evidence_exists(sample_resume):
+def test_postprocess_pdf_resume_keeps_low_signal_project_bullets_after_stronger_evidence(sample_resume):
     sample_resume["personalProjects"] = []
     sample_resume["workExperience"] = [
         {
@@ -699,8 +763,9 @@ def test_postprocess_pdf_resume_omits_low_signal_project_bullets_when_stronger_a
     project = next(project for project in tailored.personalProjects if project.name == "Monash University AI Lab")
     assert any("RAG assistant" in bullet for bullet in project.description)
     assert any("model evaluation" in bullet for bullet in project.description)
-    assert all("Unity" not in bullet for bullet in project.description)
-    assert all("Figma" not in bullet for bullet in project.description)
+    assert any("Unity" in bullet for bullet in project.description)
+    assert any("Figma" in bullet for bullet in project.description)
+    assert all("Unity" not in bullet and "Figma" not in bullet for bullet in project.description[:2])
 
 
 def test_postprocess_pdf_resume_prioritizes_model_delivery_before_supporting_pipeline_bullets(sample_resume):
@@ -787,7 +852,7 @@ def test_postprocess_pdf_resume_professionalizes_academic_project_bullets(sample
     assert "Collaborated with 3 teammates to test the solution with users." in project.description
 
 
-def test_postprocess_pdf_resume_omits_single_bullet_low_relevance_role_for_mismatched_jd(sample_resume):
+def test_postprocess_pdf_resume_keeps_low_relevance_role_but_sorts_it_lower(sample_resume):
     sample_resume["workExperience"] = [
         {
             "id": 1,
@@ -839,8 +904,42 @@ def test_postprocess_pdf_resume_omits_single_bullet_low_relevance_role_for_misma
         ["AI Engineer", "LLM", "workflow automation", "Python"],
     )
 
-    assert all("Independent Retail Brand" not in item.company for item in tailored.workExperience)
+    assert any(item.company == "Independent Retail Brand" for item in tailored.workExperience)
+    assert tailored.workExperience[-1].company == "Independent Retail Brand"
     assert any(item.company == "Little Feast Studio" for item in tailored.workExperience)
+
+
+def test_postprocess_pdf_resume_uses_evidence_map_for_role_type_sorting(sample_resume):
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Machine Learning Intern",
+            "company": "RetailOps Analytics",
+            "location": "Sydney",
+            "years": "2025",
+            "description": [
+                "Built a churn prediction model and evaluated model outputs.",
+            ],
+        },
+        {
+            "id": 2,
+            "title": "Junior Software Developer",
+            "company": "Campus Services Platform",
+            "location": "Sydney",
+            "years": "2024",
+            "description": [
+                "Implemented React components and REST API integrations.",
+                "Debugged SQL queries, maintained Git branches and wrote unit tests.",
+            ],
+        },
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        ["Software Engineer", "React", "REST API", "SQL", "Git", "unit tests"],
+    )
+
+    assert tailored.workExperience[0].title == "Junior Software Developer"
 
 
 def test_postprocess_pdf_resume_keeps_role_when_it_matches_non_technical_jd(sample_resume):
@@ -974,8 +1073,8 @@ def test_postprocess_pdf_resume_limits_summary_to_three_sentences(sample_resume)
     assert "Also has broad AI automation experience" not in tailored.summary
 
 
-@patch("app.career_ops.pdf_generator.extract_job_keywords_llm", new_callable=AsyncMock)
-@patch("app.career_ops.pdf_generator.improve_resume", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.extract_job_keywords_llm", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.improve_resume", new_callable=AsyncMock)
 async def test_tailor_resume_uses_full_prompt_for_pdf(
     mock_improve_resume,
     mock_extract_keywords,
@@ -1004,8 +1103,8 @@ async def test_tailor_resume_uses_full_prompt_for_pdf(
     assert mock_improve_resume.await_args.kwargs["prompt_id"] == "full"
 
 
-@patch("app.career_ops.pdf_generator.extract_job_keywords_llm", new_callable=AsyncMock)
-@patch("app.career_ops.pdf_generator.improve_resume", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.extract_job_keywords_llm", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.improve_resume", new_callable=AsyncMock)
 async def test_tailor_resume_uses_structured_job_keywords_for_pdf_targets(
     mock_improve_resume,
     mock_extract_keywords,
@@ -1050,11 +1149,11 @@ async def test_tailor_resume_uses_structured_job_keywords_for_pdf_targets(
     ]
 
 
-@patch("app.career_ops.pdf_generator.verify_diff_result")
-@patch("app.career_ops.pdf_generator.apply_diffs")
-@patch("app.career_ops.pdf_generator.generate_resume_diffs", new_callable=AsyncMock)
-@patch("app.career_ops.pdf_generator.extract_job_keywords_llm", new_callable=AsyncMock)
-@patch("app.career_ops.pdf_generator.improve_resume", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.verify_diff_result")
+@patch("app.career_ops.resume_tailoring.apply_diffs")
+@patch("app.career_ops.resume_tailoring.generate_resume_diffs", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.extract_job_keywords_llm", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.improve_resume", new_callable=AsyncMock)
 async def test_tailor_resume_uses_diff_fallback_before_heuristic(
     mock_improve_resume,
     mock_extract_keywords,
