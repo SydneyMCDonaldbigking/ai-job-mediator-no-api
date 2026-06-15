@@ -20,6 +20,10 @@ from app.career_ops.pdf_generator import (
 )
 from app.career_ops.resume_renderer import render_resume_html
 from app.career_ops.resume_text import normalize_text_for_ats
+from app.career_ops.tailoring_review import (
+    build_tailoring_review_report,
+    generate_tailoring_review,
+)
 from app.career_ops.scanner import (
     build_title_filter,
     detect_api,
@@ -52,6 +56,8 @@ __all__ = [
     "fetch_market_signals",
     "parse_duckduckgo_results",
     "generate_tailored_resume_pdf",
+    "build_tailoring_review_report",
+    "generate_tailoring_review",
     "normalize_text_for_ats",
     "render_resume_html",
     "build_title_filter",

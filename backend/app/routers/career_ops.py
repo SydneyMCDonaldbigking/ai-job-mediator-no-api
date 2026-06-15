@@ -8,12 +8,15 @@ from fastapi.responses import Response
 from app.career_ops.evaluator import evaluate_job_fit
 from app.career_ops.pdf_generator import CareerOpsPDFError, generate_tailored_resume_pdf
 from app.career_ops.scanner import scan_portals
+from app.career_ops.tailoring_review import generate_tailoring_review
 from app.career_ops.translator import translate_job_description_to_chinese
 from app.schemas import (
     CareerOpsEvaluateRequest,
     CareerOpsEvaluateResponse,
     CareerOpsScanResponse,
     GenerateTailoredPDFRequest,
+    GenerateTailoringReviewRequest,
+    TailoringReviewResponse,
     TranslateJobDescriptionRequest,
     TranslateJobDescriptionResponse,
 )
@@ -114,4 +117,28 @@ async def generate_tailored_pdf_endpoint(
         content=result.pdf_bytes,
         media_type="application/pdf",
         headers=headers,
+    )
+
+
+@router.post("/generate-tailoring-review", response_model=TailoringReviewResponse)
+async def generate_tailoring_review_endpoint(
+    request: GenerateTailoringReviewRequest,
+) -> TailoringReviewResponse:
+    """Generate a JD-specific resume tailoring review without rendering PDF."""
+    try:
+        result = await generate_tailoring_review(
+            resume=request.resume,
+            job_description=request.job_description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate the tailoring review.",
+        ) from exc
+
+    return TailoringReviewResponse(
+        request_id=str(uuid4()),
+        data=result,
     )

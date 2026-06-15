@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import app.career_ops.pdf_generator as pdf_generator
 from app.career_ops.pdf_generator import (
     _TEMPLATE_FILES,
     _heuristic_tailor_resume,
@@ -16,7 +17,7 @@ from app.career_ops.pdf_generator import (
     normalize_text_for_ats,
     render_resume_html,
 )
-from app.schemas.models import ImproveDiffResult, ResumeChange
+from app.schemas.models import ImproveDiffResult, ResumeChange, ResumeData
 
 
 def test_normalize_text_for_ats_replaces_problematic_unicode():
@@ -94,6 +95,61 @@ def test_pdf_generator_keeps_candidate_content_out_of_source_code():
     assert "TIANQI" not in source
     assert "Little Feast" not in source
     assert "Cat vs Dog" not in source
+
+
+async def test_generate_tailored_resume_pdf_attaches_review_report(
+    monkeypatch,
+    sample_resume,
+    sample_job_description,
+):
+    async def fake_tailor_resume(*, resume, job_description):
+        return ResumeData.model_validate(sample_resume), ["Python", "FastAPI", "Kubernetes"]
+
+    class FakePage:
+        async def set_content(self, *args, **kwargs):
+            return None
+
+        async def emulate_media(self, *args, **kwargs):
+            return None
+
+        async def evaluate(self, *args, **kwargs):
+            return None
+
+        async def pdf(self, *args, **kwargs):
+            return b"%PDF-1.4\nfake\n"
+
+    class FakeBrowser:
+        async def new_page(self, *args, **kwargs):
+            return FakePage()
+
+        async def close(self):
+            return None
+
+    class FakePlaywrightContext:
+        async def __aenter__(self):
+            return SimpleNamespace(chromium=SimpleNamespace())
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    async def fake_launch_browser(*args, **kwargs):
+        return FakeBrowser()
+
+    monkeypatch.setattr(pdf_generator, "_tailor_resume", fake_tailor_resume)
+    monkeypatch.setattr(pdf_generator, "render_resume_html", lambda **kwargs: "<html></html>")
+    monkeypatch.setattr(pdf_generator, "_launch_browser", fake_launch_browser)
+    monkeypatch.setattr(pdf_generator, "async_playwright", lambda: FakePlaywrightContext())
+
+    result = await pdf_generator.generate_tailored_resume_pdf(
+        resume=sample_resume,
+        job_description=sample_job_description,
+        headless=True,
+    )
+
+    assert result.pdf_bytes.startswith(b"%PDF-1.4")
+    assert result.review_report is not None
+    assert result.review_report.keyword_evidence[0].keyword == "Python"
+    assert "Kubernetes" in result.review_report.unsupported_keywords
 
 
 def test_all_resume_templates_render_without_leftover_placeholders(sample_resume):

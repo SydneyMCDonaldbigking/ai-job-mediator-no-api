@@ -37,6 +37,7 @@ from app.career_ops.resume_tailoring import (
     _tailor_resume,
 )
 from app.career_ops.resume_text import normalize_text_for_ats
+from app.career_ops.tailoring_review import build_tailoring_review_report
 from app.schemas.models import ResumeData, TailoredPDFResult
 
 
@@ -149,11 +150,18 @@ async def generate_tailored_resume_pdf(
         raise CareerOpsPDFError(f"Playwright PDF generation failed: {exc}") from exc
 
     filename = f"{_slugify_filename(tailored_resume.personalInfo.name)}-tailored.pdf"
+    review_report = build_tailoring_review_report(
+        original_resume=normalized_resume,
+        tailored_resume=tailored_resume,
+        job_description=job_description,
+        keyword_targets=keyword_targets,
+    )
     return TailoredPDFResult(
         filename=filename,
         pdf_bytes=pdf_bytes,
         tailored_resume=tailored_resume,
         keyword_targets=keyword_targets,
+        review_report=review_report,
     )
 
 

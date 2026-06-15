@@ -6,7 +6,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
-from app.schemas.models import CareerOpsEvaluationData, CareerOpsScoreDimension, TailoredPDFResult
+from app.schemas.models import (
+    CareerOpsEvaluationData,
+    CareerOpsScoreDimension,
+    TailoredPDFResult,
+    TailoringReviewResult,
+)
 
 
 @pytest.fixture
@@ -112,3 +117,40 @@ async def test_generate_tailored_pdf_returns_pdf_bytes(
         "content-disposition"
     ]
     assert response.content.startswith(b"%PDF-1.4")
+
+
+@patch("app.routers.career_ops.generate_tailoring_review", new_callable=AsyncMock)
+async def test_generate_tailoring_review_returns_structured_report(
+    mock_generate_review,
+    client,
+    sample_resume,
+    sample_job_description,
+):
+    from app.career_ops.tailoring_review import build_tailoring_review_report
+
+    review_report = build_tailoring_review_report(
+        original_resume=sample_resume,
+        tailored_resume=sample_resume,
+        job_description=sample_job_description,
+        keyword_targets=["Python", "FastAPI", "Kubernetes"],
+    )
+    mock_generate_review.return_value = TailoringReviewResult(
+        tailored_resume=sample_resume,
+        keyword_targets=["Python", "FastAPI", "Kubernetes"],
+        review_report=review_report,
+    )
+
+    async with client:
+        response = await client.post(
+            "/api/generate-tailoring-review",
+            json={
+                "resume": sample_resume,
+                "job_description": sample_job_description,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["keyword_targets"] == ["Python", "FastAPI", "Kubernetes"]
+    assert payload["data"]["review_report"]["keyword_evidence"][0]["keyword"] == "Python"
+    assert "Kubernetes" in payload["data"]["review_report"]["unsupported_keywords"]

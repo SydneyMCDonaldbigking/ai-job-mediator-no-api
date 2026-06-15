@@ -47,6 +47,15 @@ def test_infer_job_profile_prefers_ai_when_ai_and_software_scores_tie():
     assert profile.primary_type == JOB_TYPE_AI_ML
 
 
+def test_infer_job_profile_handles_software_role_and_plural_apis():
+    profile = infer_job_profile(
+        "Junior software role requiring REST APIs and documentation.",
+        ["REST APIs"],
+    )
+
+    assert profile.primary_type == JOB_TYPE_SOFTWARE
+
+
 def test_build_resume_evidence_map_tags_entries_against_ai_jd(sample_resume):
     sample_resume["workExperience"] = [
         {

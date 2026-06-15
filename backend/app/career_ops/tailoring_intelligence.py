@@ -46,6 +46,8 @@ _JOB_TYPE_TERMS: dict[str, tuple[str, ...]] = {
         "prompt engineering",
     ),
     JOB_TYPE_SOFTWARE: (
+        "software",
+        "software role",
         "software engineer",
         "software developer",
         "backend",
@@ -53,6 +55,9 @@ _JOB_TYPE_TERMS: dict[str, tuple[str, ...]] = {
         "full-stack",
         "full stack",
         "api",
+        "apis",
+        "rest api",
+        "rest apis",
         "fastapi",
         "react",
         "javascript",

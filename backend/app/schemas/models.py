@@ -525,6 +525,106 @@ class GenerateTailoredPDFRequest(BaseModel):
     page_size: Literal["A4", "LETTER"] = "A4"
 
 
+class GenerateTailoringReviewRequest(BaseModel):
+    """Request payload for POST /api/generate-tailoring-review."""
+
+    resume: dict[str, Any] | str
+    job_description: str
+
+
+class TailoringReviewJobProfile(BaseModel):
+    """Coarse JD profile used to explain resume tailoring decisions."""
+
+    primary_type: str
+    secondary_types: list[str] = Field(default_factory=list)
+    keyword_targets: list[str] = Field(default_factory=list)
+
+
+class TailoringKeywordEvidence(BaseModel):
+    """Evidence showing whether a JD keyword is supported by the source resume."""
+
+    keyword: str
+    supported: bool
+    evidence_paths: list[str] = Field(default_factory=list)
+    evidence_summary: str = ""
+
+
+class TailoringEntryReview(BaseModel):
+    """Human-readable review of one tailored resume entry."""
+
+    section: str
+    index: int
+    title: str
+    organization: str
+    evidence_tags: list[str] = Field(default_factory=list)
+    matched_keywords: list[str] = Field(default_factory=list)
+    relevance_score: int = 0
+    decision: str
+    rationale: str
+
+
+class TailoringContentChange(BaseModel):
+    """Summary of a deterministic content-level tailoring change."""
+
+    path: str
+    change_type: str
+    before: str = ""
+    after: str = ""
+    reason: str = ""
+
+
+class TailoringPreservationSummary(BaseModel):
+    """Section counts that make deletion or expansion visible to the user."""
+
+    work_experience_original_count: int = 0
+    work_experience_tailored_count: int = 0
+    removed_work_experience_count: int = 0
+    project_original_count: int = 0
+    project_tailored_count: int = 0
+    removed_project_count: int = 0
+    skill_original_count: int = 0
+    skill_tailored_count: int = 0
+    removed_skill_count: int = 0
+
+
+class TailoringReviewScores(BaseModel):
+    """Simple product-facing quality scores for reviewing generated output."""
+
+    ats_score: int
+    hr_score: int
+    hiring_manager_score: int
+    notes: list[str] = Field(default_factory=list)
+
+
+class TailoringReviewReport(BaseModel):
+    """Structured explanation for a JD-tailored resume output."""
+
+    job_profile: TailoringReviewJobProfile
+    keyword_evidence: list[TailoringKeywordEvidence] = Field(default_factory=list)
+    unsupported_keywords: list[str] = Field(default_factory=list)
+    entry_reviews: list[TailoringEntryReview] = Field(default_factory=list)
+    content_changes: list[TailoringContentChange] = Field(default_factory=list)
+    preservation_summary: TailoringPreservationSummary
+    top_alignment_reasons: list[str] = Field(default_factory=list)
+    safety_notes: list[str] = Field(default_factory=list)
+    scores: TailoringReviewScores
+
+
+class TailoringReviewResult(BaseModel):
+    """In-memory result returned by the tailoring review generator."""
+
+    tailored_resume: ResumeData
+    keyword_targets: list[str] = Field(default_factory=list)
+    review_report: TailoringReviewReport
+
+
+class TailoringReviewResponse(BaseModel):
+    """Response payload for POST /api/generate-tailoring-review."""
+
+    request_id: str
+    data: TailoringReviewResult
+
+
 class TailoredPDFResult(BaseModel):
     """In-memory result returned by the Career Ops PDF generator."""
 
@@ -532,6 +632,7 @@ class TailoredPDFResult(BaseModel):
     pdf_bytes: bytes
     tailored_resume: ResumeData
     keyword_targets: list[str] = Field(default_factory=list)
+    review_report: TailoringReviewReport | None = None
 
 
 class CareerOpsMarketSource(BaseModel):
