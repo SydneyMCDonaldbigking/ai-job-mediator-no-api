@@ -1,16 +1,20 @@
 """Unit tests for Career Ops job evaluation helpers."""
 
 import asyncio
+import copy
 
 from app.career_ops import evaluator as evaluator_module
 from app.ai.tasks.evaluate_job import GeneratedJobEvaluation
 from app.ai.parsers.evaluate_job import EvaluationDimensionResult
 from app.career_ops.evaluator import (
     DEFAULT_DIMENSION_BLUEPRINT,
+    build_resume_evidence_matches,
     build_job_evaluation_prompt,
     evaluate_job_fit,
+    extract_jd_requirements,
     summarize_af_scores,
 )
+from app.schemas.models import ResumeData
 
 
 def test_build_job_evaluation_prompt_mentions_all_af_sections(sample_resume, sample_job_description):
@@ -63,6 +67,50 @@ def test_summarize_af_scores_groups_dimension_scores():
         "E": 5.0,
         "F": 4.0,
     }
+
+
+def test_extract_jd_requirements_detects_prose_hard_requirements():
+    jd = (
+        "This role requires Ruby on Rails production experience. "
+        "You must have active security clearance. "
+        "Candidates need 5+ years backend development experience."
+    )
+
+    requirements = extract_jd_requirements(jd)
+    hard_text = " ".join(
+        requirement.text.lower()
+        for requirement in requirements
+        if requirement.category in {"hard", "caution"}
+    )
+
+    assert "ruby on rails" in hard_text
+    assert "security clearance" in hard_text
+    assert "5+ years" in hard_text
+
+
+def test_years_requirement_is_actionable_evidence_gap(sample_resume):
+    junior_resume = copy.deepcopy(sample_resume)
+    junior_resume["personalInfo"]["title"] = "Software Engineer"
+    junior_resume["summary"] = "Backend developer building Python APIs."
+    junior_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Software Engineer",
+            "company": "SmallCo",
+            "location": "Sydney, NSW",
+            "years": "2024 - 2025",
+            "description": ["Built Python API endpoints for internal tools."],
+        }
+    ]
+
+    matches = build_resume_evidence_matches(
+        ResumeData.model_validate(junior_resume),
+        "Requirements:\n- 5+ years backend development experience",
+    )
+
+    years_match = next(match for match in matches if "5+ years" in match.requirement)
+    assert years_match.status == "missing"
+    assert years_match.risk
 
 
 def test_evaluate_job_fit_rescales_normalized_llm_scores(

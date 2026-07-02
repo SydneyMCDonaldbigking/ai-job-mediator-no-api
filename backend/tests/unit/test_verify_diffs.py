@@ -4,7 +4,7 @@ import copy
 import pytest
 
 from app.schemas.models import ResumeChange
-from app.services.improver import verify_diff_result
+from app.services.improver import has_blocking_diff_warnings, verify_diff_result
 
 
 class TestVerifyNoWarnings:
@@ -33,12 +33,17 @@ class TestVerifyEmptyChanges:
         warnings = verify_diff_result(sample_resume, sample_resume, [], sample_job_keywords)
         assert len(warnings) == 1
         assert "no changes" in warnings[0].lower()
+        assert has_blocking_diff_warnings(warnings) is True
 
     def test_returns_early_on_empty(self, sample_resume, sample_job_keywords):
         """When no changes applied, skip other checks."""
         warnings = verify_diff_result(sample_resume, sample_resume, [], sample_job_keywords)
         # Should only have the "no changes" warning, not section count etc.
         assert len(warnings) == 1
+
+    def test_allows_non_blocking_quality_warnings(self):
+        warnings = ["Possible invented metric in summary: 40% (not in original)"]
+        assert has_blocking_diff_warnings(warnings) is False
 
 
 class TestVerifySectionCounts:

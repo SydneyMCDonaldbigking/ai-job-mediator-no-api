@@ -54,6 +54,7 @@ from app.services.improver import (
     extract_job_keywords,
     generate_improvements,
     generate_resume_diffs,
+    has_blocking_diff_warnings,
     improve_resume,
     verify_diff_result,
 )
@@ -410,6 +411,21 @@ def _calculate_diff_from_resume(
     except Exception as e:
         logger.warning("Skipping resume diff due to calculation failure: %s", e)
         return None, None, f"calculation_error: {str(e)}"
+
+
+def _raise_if_no_meaningful_changes(
+    original_data: dict[str, Any] | None,
+    detailed_changes: list[ResumeFieldDiff] | None,
+    diff_error: str | None,
+) -> None:
+    if original_data and diff_error is None and not detailed_changes:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No meaningful resume changes were produced. "
+                "Please retry preview with a different strategy or edit the resume manually."
+            ),
+        )
 
 
 def _validate_confirm_payload(
@@ -1128,6 +1144,11 @@ async def improve_resume_confirm_endpoint(
         )
         if diff_error:
             response_warnings.append(f"Could not calculate changes: {diff_error}")
+        _raise_if_no_meaningful_changes(
+            _get_original_resume_data(resume),
+            detailed_changes,
+            diff_error,
+        )
 
         stage = "generate_auxiliary_messages"
         (
@@ -1228,6 +1249,7 @@ async def improve_resume_endpoint(
         original_resume_data = _get_original_resume_data(resume)
         # Collect warnings throughout the process
         response_warnings: list[str] = []
+        diff_had_blocking_warnings = False
 
         # Diff-based improvement: generate targeted changes, apply with verification
         if original_resume_data:
@@ -1254,6 +1276,7 @@ async def improve_resume_endpoint(
                 job_keywords=job_keywords,
             )
             response_warnings.extend(diff_warnings)
+            diff_had_blocking_warnings = has_blocking_diff_warnings(diff_warnings)
 
             if rejected_changes:
                 response_warnings.append(
@@ -1357,6 +1380,15 @@ async def improve_resume_endpoint(
         )
         if diff_error:
             response_warnings.append(f"Could not calculate changes: {diff_error}")
+        if diff_had_blocking_warnings:
+            logger.info(
+                "Initial diff produced no applied changes; checking final tailored diff."
+            )
+        _raise_if_no_meaningful_changes(
+            original_resume_data,
+            detailed_changes,
+            diff_error,
+        )
 
         # Generate improvement suggestions
         improvements = generate_improvements(job_keywords)
@@ -1427,6 +1459,8 @@ async def improve_resume_endpoint(
             ),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Resume improvement failed: {e}")
         raise HTTPException(

@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 # LLM-012: Job description truncation limits
 MAX_JD_LENGTH = 2000
 MIN_TRUNCATION_WARNING_LENGTH = 1500
+_KEYWORD_SIGNAL_FIELDS = (
+    "required_skills",
+    "preferred_skills",
+    "keywords",
+    "key_responsibilities",
+)
 
 
 def _keyword_in_text(keyword: str, text: str) -> bool:
@@ -46,6 +52,18 @@ def _keyword_in_text(keyword: str, text: str) -> bool:
     # Use word boundaries
     pattern = rf"\b{escaped}\b"
     return bool(re.search(pattern, text.lower()))
+
+
+def _collect_jd_keyword_signals(jd_keywords: dict[str, Any]) -> set[str]:
+    signals: set[str] = set()
+    for field in _KEYWORD_SIGNAL_FIELDS:
+        values = jd_keywords.get(field, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                signals.add(value.strip())
+    return signals
 
 
 async def refine_resume(
@@ -165,11 +183,8 @@ def analyze_keyword_gaps(
     tailored_text = _extract_all_text(tailored).lower()
     master_text = _extract_all_text(master).lower()
 
-    # Get all keywords from JD
-    all_jd_keywords: set[str] = set()
-    all_jd_keywords.update(jd_keywords.get("required_skills", []))
-    all_jd_keywords.update(jd_keywords.get("preferred_skills", []))
-    all_jd_keywords.update(jd_keywords.get("keywords", []))
+    # Get all JD signals that should affect resume/JD alignment.
+    all_jd_keywords = _collect_jd_keyword_signals(jd_keywords)
 
     # Find missing keywords
     missing: list[str] = []
@@ -537,10 +552,7 @@ def calculate_keyword_match(
     """
     resume_text = _extract_all_text(resume).lower()
 
-    all_keywords: set[str] = set()
-    all_keywords.update(jd_keywords.get("required_skills", []))
-    all_keywords.update(jd_keywords.get("preferred_skills", []))
-    all_keywords.update(jd_keywords.get("keywords", []))
+    all_keywords = _collect_jd_keyword_signals(jd_keywords)
 
     # SVC-009: Return 0% if no keywords (not 100% - that's misleading)
     if not all_keywords:

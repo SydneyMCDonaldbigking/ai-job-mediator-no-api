@@ -183,7 +183,12 @@ class TestAnalyzeKeywordGaps:
     def test_identifies_injectable_vs_non_injectable(self, sample_resume, master_resume, sample_job_keywords):
         analysis = analyze_keyword_gaps(sample_job_keywords, sample_resume, master_resume)
         # Every keyword lands in exactly one bucket
-        all_jd = set(sample_job_keywords["required_skills"] + sample_job_keywords["preferred_skills"] + sample_job_keywords["keywords"])
+        all_jd = set(
+            sample_job_keywords["required_skills"]
+            + sample_job_keywords["preferred_skills"]
+            + sample_job_keywords["keywords"]
+            + sample_job_keywords["key_responsibilities"]
+        )
         present = all_jd - set(analysis.missing_keywords)
         injectable = set(analysis.injectable_keywords)
         non_injectable = set(analysis.non_injectable_keywords)
@@ -203,6 +208,22 @@ class TestAnalyzeKeywordGaps:
         analysis = analyze_keyword_gaps(keywords, sample_resume, master_resume)
         assert "Python" not in analysis.missing_keywords
         assert analysis.current_match_percentage == 100.0
+
+    def test_includes_key_responsibilities_in_gap_analysis(self, sample_resume, master_resume):
+        present = "Built REST APIs serving 50K requests/day using Python and FastAPI"
+        missing = "Own GraphQL platform migrations"
+        keywords = {
+            "required_skills": [],
+            "preferred_skills": [],
+            "keywords": [],
+            "key_responsibilities": [present, missing],
+        }
+
+        analysis = analyze_keyword_gaps(keywords, sample_resume, master_resume)
+
+        assert present not in analysis.missing_keywords
+        assert missing in analysis.missing_keywords
+        assert analysis.current_match_percentage == 50.0
 
 
 class TestCalculateKeywordMatch:
@@ -228,3 +249,17 @@ class TestCalculateKeywordMatch:
         pct = calculate_keyword_match(sample_resume, keywords)
         # "Go" is not in the sample resume as a standalone word
         assert pct == 0.0
+
+    def test_includes_key_responsibilities_in_match_score(self, sample_resume):
+        present = "Built REST APIs serving 50K requests/day using Python and FastAPI"
+        missing = "Own GraphQL platform migrations"
+        keywords = {
+            "required_skills": [],
+            "preferred_skills": [],
+            "keywords": [],
+            "key_responsibilities": [present, missing],
+        }
+
+        pct = calculate_keyword_match(sample_resume, keywords)
+
+        assert pct == 50.0

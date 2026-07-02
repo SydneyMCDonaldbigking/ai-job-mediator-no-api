@@ -12,6 +12,7 @@ import json
 import logging
 import re
 from collections import defaultdict
+from datetime import date
 from statistics import mean
 from typing import Any
 
@@ -102,8 +103,11 @@ DEFAULT_DIMENSION_BLUEPRINT: list[dict[str, str]] = [
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#./-]{2,}")
 _NUMBER_RE = re.compile(r"\b(?:\d+%|\$\d+(?:[.,]\d+)?[KMB]?|\d+[KMB]?|\d+\+)\b")
-_YEARS_RE = re.compile(r"(\d+)\+?\s+years?", re.IGNORECASE)
+_YEARS_RE = re.compile(r"\b(\d+)\+?\s*(?:years?|yrs?)\b", re.IGNORECASE)
 _BULLET_LINE_RE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$")
+_PROSE_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+|[\n;]+")
+_YEAR_VALUE_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+_PRESENT_RE = re.compile(r"\b(?:present|current|now)\b", re.IGNORECASE)
 
 _STOPWORDS = {
     "about",
@@ -188,6 +192,29 @@ _CAUTION_TERMS = [
     "must be located",
     "onsite only",
 ]
+
+_HARD_REQUIREMENT_MARKERS = (
+    "must",
+    "required",
+    "requires",
+    "require ",
+    "requirement",
+    "minimum",
+    "at least",
+    "need ",
+    "needs ",
+    "mandatory",
+    "essential",
+)
+
+_PREFERRED_REQUIREMENT_MARKERS = (
+    "preferred",
+    "nice to have",
+    "nice-to-have",
+    "bonus",
+    "plus",
+    "desirable",
+)
 
 
 def coerce_resume_data(resume: ResumeData | dict[str, Any] | str) -> ResumeData:
@@ -303,6 +330,17 @@ def _clean_requirement_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip(" -\t\r\n")).strip()
 
 
+def _categorize_requirement_text(text: str, default: str | None = None) -> str | None:
+    lower = text.lower()
+    if any(term in lower for term in _CAUTION_TERMS):
+        return "caution"
+    if any(marker in lower for marker in _PREFERRED_REQUIREMENT_MARKERS):
+        return "preferred"
+    if any(marker in lower for marker in _HARD_REQUIREMENT_MARKERS):
+        return "hard"
+    return default
+
+
 def extract_jd_requirements(job_description: str) -> list[JDRequirement]:
     """Extract actionable requirements from a JD without narrowing search recall."""
     requirements: list[JDRequirement] = []
@@ -315,10 +353,16 @@ def extract_jd_requirements(job_description: str) -> list[JDRequirement]:
         text = _clean_requirement_text(match.group(1))
         if not text:
             continue
-        category = "preferred" if any(
-            token in text.lower() for token in ("preferred", "plus", "nice to have")
-        ) else "hard"
+        category = _categorize_requirement_text(text, default="hard") or "hard"
         requirements.append(JDRequirement(text=text, category=category))
+
+    for chunk in _PROSE_SENTENCE_RE.split(job_description):
+        text = _clean_requirement_text(chunk)
+        if not text or _BULLET_LINE_RE.match(text):
+            continue
+        category = _categorize_requirement_text(text)
+        if category in {"hard", "preferred", "caution"}:
+            requirements.append(JDRequirement(text=text, category=category))
 
     for caution in _CAUTION_TERMS:
         if caution in lower and not any(
@@ -390,6 +434,94 @@ def _matches_requirement_token(entry_text: str, token: str) -> bool:
     return token in lower_entry
 
 
+def _year_span_from_text(text: str) -> float | None:
+    years = [int(match.group(0)) for match in _YEAR_VALUE_RE.finditer(text)]
+    if not years:
+        return None
+    start = years[0]
+    if len(years) >= 2:
+        end = years[1]
+    elif _PRESENT_RE.search(text):
+        end = date.today().year
+    else:
+        return None
+    if end < start:
+        return None
+    return float(end - start)
+
+
+def _infer_resume_years(resume_data: ResumeData) -> tuple[float | None, list[str]]:
+    candidates: list[tuple[float, str]] = []
+    if resume_data.summary:
+        for match in _YEARS_RE.finditer(resume_data.summary):
+            candidates.append((float(match.group(1)), "summary"))
+
+    for index, item in enumerate(resume_data.workExperience):
+        if item.years:
+            span = _year_span_from_text(item.years)
+            if span is not None:
+                candidates.append((span, f"workExperience[{index}].years"))
+        for bullet_index, bullet in enumerate(item.description):
+            for match in _YEARS_RE.finditer(bullet):
+                candidates.append(
+                    (
+                        float(match.group(1)),
+                        f"workExperience[{index}].description[{bullet_index}]",
+                    )
+                )
+
+    if not candidates:
+        return None, []
+
+    max_years = max(value for value, _ in candidates)
+    paths = [path for value, path in candidates if value == max_years]
+    return max_years, paths[:4]
+
+
+def _build_years_match(
+    requirement: JDRequirement,
+    resume_data: ResumeData,
+) -> ResumeEvidenceMatch | None:
+    years_target = _extract_years_target(requirement.text)
+    if years_target is None:
+        return None
+
+    resume_years, evidence_paths = _infer_resume_years(resume_data)
+    if resume_years is None:
+        return ResumeEvidenceMatch(
+            requirement=requirement.text,
+            category=requirement.category,
+            status="missing",
+            rationale=(
+                f"JD asks for {years_target}+ years, but the resume does not "
+                "state a comparable experience duration."
+            ),
+            risk="No direct resume evidence for the required experience duration.",
+        )
+
+    if resume_years >= years_target:
+        status = "strong"
+        risk = None
+    elif resume_years >= max(0.0, years_target - 1):
+        status = "partial"
+        risk = "Resume experience duration is close but below the stated requirement."
+    else:
+        status = "missing"
+        risk = "Resume experience duration is below the stated requirement."
+
+    return ResumeEvidenceMatch(
+        requirement=requirement.text,
+        category=requirement.category,
+        status=status,
+        evidence_paths=evidence_paths,
+        rationale=(
+            f"JD asks for {years_target}+ years; resume evidence indicates "
+            f"about {resume_years:g} year(s)."
+        ),
+        risk=risk,
+    )
+
+
 def build_resume_evidence_matches(
     resume_data: ResumeData,
     job_description: str,
@@ -401,6 +533,11 @@ def build_resume_evidence_matches(
     matches: list[ResumeEvidenceMatch] = []
 
     for requirement in requirements:
+        years_match = _build_years_match(requirement, resume_data)
+        if years_match is not None:
+            matches.append(years_match)
+            continue
+
         tokens = _requirement_tokens(requirement.text)
         if not tokens:
             matches.append(

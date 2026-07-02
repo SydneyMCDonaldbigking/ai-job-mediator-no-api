@@ -160,6 +160,9 @@ _BLOCKED_FIELD_NAMES = frozenset({
 })
 
 _METRIC_RE = re.compile(r"\d+%|\d+x|\$\d+")
+_BLOCKING_DIFF_WARNING_PREFIXES = (
+    "No changes were applied",
+)
 
 
 def _is_path_allowed(path: str) -> bool:
@@ -398,6 +401,15 @@ def _count_description_words(data: dict[str, Any]) -> int:
     return total
 
 
+def has_blocking_diff_warnings(warnings: list[str]) -> bool:
+    """Return True when diff verification found a non-persistable result."""
+    return any(
+        warning.startswith(prefix)
+        for warning in warnings
+        for prefix in _BLOCKING_DIFF_WARNING_PREFIXES
+    )
+
+
 def verify_diff_result(
     original: dict[str, Any],
     result: dict[str, Any],
@@ -406,8 +418,8 @@ def verify_diff_result(
 ) -> list[str]:
     """Local quality checks on the diff result. Returns list of warnings.
 
-    All checks are local (zero LLM cost). Warnings are informational —
-    they don't block the response.
+    All checks are local (zero LLM cost). Some warnings are blocking for
+    persistence; use has_blocking_diff_warnings() before saving a result.
     """
     warnings: list[str] = []
 

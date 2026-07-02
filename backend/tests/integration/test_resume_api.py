@@ -7,7 +7,12 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
-from app.schemas.models import ImproveResumeData, ImproveResumeResponse, ResumeData
+from app.schemas.models import (
+    ImproveDiffResult,
+    ImproveResumeData,
+    ImproveResumeResponse,
+    ResumeData,
+)
 
 
 @pytest.fixture
@@ -320,3 +325,56 @@ class TestSelectedJobPreview:
         assert resp.status_code == 409
         assert "Ruby on Rails" in resp.json()["detail"]
         mock_preview_flow.assert_not_awaited()
+
+
+class TestImproveResume:
+    """POST /api/v1/resumes/improve"""
+
+    @patch("app.routers.resumes._generate_auxiliary_messages", new_callable=AsyncMock)
+    @patch("app.routers.resumes.refine_resume", new_callable=AsyncMock)
+    @patch("app.routers.resumes.generate_resume_diffs", new_callable=AsyncMock)
+    @patch("app.routers.resumes.extract_job_keywords", new_callable=AsyncMock)
+    @patch("app.routers.resumes.db")
+    async def test_direct_improve_rejects_empty_final_diff(
+        self,
+        mock_db,
+        mock_extract_keywords,
+        mock_generate_diffs,
+        mock_refine_resume,
+        mock_auxiliary_messages,
+        client,
+        mock_resume_record,
+        sample_resume,
+    ):
+        mock_db.get_resume.return_value = mock_resume_record
+        mock_db.get_master_resume.return_value = mock_resume_record
+        mock_db.get_job.return_value = {
+            "job_id": "job-123",
+            "content": "Python API Engineer\nRequirements:\n- Python APIs\n",
+        }
+        mock_extract_keywords.return_value = {
+            "required_skills": ["Python"],
+            "preferred_skills": [],
+            "keywords": [],
+            "key_responsibilities": [],
+        }
+        mock_generate_diffs.return_value = ImproveDiffResult(changes=[])
+        mock_refine_resume.return_value = MagicMock(
+            refined_data=sample_resume,
+            passes_completed=0,
+            keyword_analysis=None,
+            alignment_report=None,
+            ai_phrases_removed=[],
+            final_match_percentage=100.0,
+        )
+
+        async with client:
+            resp = await client.post(
+                "/api/v1/resumes/improve",
+                json={"resume_id": "res-123", "job_id": "job-123"},
+            )
+
+        assert resp.status_code == 422
+        assert "No meaningful resume changes" in resp.json()["detail"]
+        mock_db.create_resume.assert_not_called()
+        mock_auxiliary_messages.assert_not_awaited()
