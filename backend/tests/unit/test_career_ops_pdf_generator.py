@@ -47,9 +47,26 @@ def test_render_resume_html_contains_resume_sections(sample_resume):
     assert "<html" in html
     assert "Jane Doe" in html
     assert "Professional Summary" in html
-    assert "Core Competencies" in html
+    assert "Evidence Snapshot" in html
     assert "Python" in html
     assert "{{NAME}}" not in html
+
+
+def test_render_resume_html_uses_recruiter_scan_visual_system(sample_resume):
+    html = render_resume_html(
+        resume=sample_resume,
+        job_description="Need Python, FastAPI, Docker and AWS experience.",
+        keywords=["Python", "FastAPI", "Docker", "AWS"],
+        template_name="modern",
+    )
+
+    assert 'data-template="modern"' in html
+    assert "recruiter-scan" in html
+    assert "resume-role" in html
+    assert "evidence-snapshot" in html
+    assert "snapshot-grid" in html
+    assert "Evidence Snapshot" in html
+    assert "Core Competencies" not in html
 
 
 def test_render_resume_html_can_force_resume_template(sample_resume):
@@ -75,9 +92,18 @@ def test_select_resume_template_uses_env_override(monkeypatch):
     assert template_path == _TEMPLATE_FILES["executive"]
 
 
-@patch("app.career_ops.resume_renderer.random.choice")
-def test_select_resume_template_randomizes_by_default(mock_choice, monkeypatch):
+def test_select_resume_template_defaults_to_modern(monkeypatch):
     monkeypatch.delenv("RESUME_TEMPLATE", raising=False)
+
+    selected_template, template_path = _select_resume_template()
+
+    assert selected_template == "modern"
+    assert template_path == _TEMPLATE_FILES["modern"]
+
+
+@patch("app.career_ops.resume_renderer.random.choice")
+def test_select_resume_template_randomizes_when_explicitly_requested(mock_choice, monkeypatch):
+    monkeypatch.setenv("RESUME_TEMPLATE", "random")
     mock_choice.return_value = "modern"
 
     selected_template, template_path = _select_resume_template()

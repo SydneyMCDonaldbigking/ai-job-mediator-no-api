@@ -37,7 +37,11 @@ def _render_competencies(resume: ResumeData | dict | str, keywords: list[str]) -
         "Targeted resume generated from the supplied job description"
     ]
     return "\n".join(
-        f'<span class="competency-tag">{escape(_compact_whitespace(item))}</span>'
+        (
+            '<span class="snapshot-item competency-tag">'
+            f'{escape(_compact_whitespace(item))}'
+            "</span>"
+        )
         for item in items
         if _compact_whitespace(item)
     )
@@ -177,7 +181,9 @@ def _render_skills(resume: ResumeData, keywords: list[str] | None = None) -> str
 def _select_resume_template(template_name: str | None = None) -> tuple[str, Path]:
     requested = _compact_whitespace(template_name or os.environ.get("RESUME_TEMPLATE", ""))
     requested_key = requested.casefold()
-    if requested_key and requested_key != "random":
+    if not requested_key:
+        return "modern", _TEMPLATE_FILES["modern"]
+    if requested_key != "random":
         if requested_key in _TEMPLATE_FILES:
             return requested_key, _TEMPLATE_FILES[requested_key]
         logger.warning(
@@ -209,6 +215,7 @@ def render_resume_html(
         "{{PAGE_WIDTH}}": "8.27in",
         "{{TEMPLATE_NAME}}": escape(selected_template),
         "{{NAME}}": escape(_compact_whitespace(personal.name) or "Candidate"),
+        "{{TITLE}}": escape(_compact_whitespace(personal.title) or "Targeted Technology Candidate"),
         "{{PHONE}}": escape(_compact_whitespace(personal.phone) or "Phone not provided"),
         "{{EMAIL}}": escape(_compact_whitespace(personal.email) or "Email not provided"),
         "{{LINKEDIN_URL}}": escape(_compact_whitespace(personal.linkedin) or "#"),
@@ -217,7 +224,7 @@ def render_resume_html(
         "{{PORTFOLIO_DISPLAY}}": escape(_compact_whitespace(personal.website or personal.github) or "Portfolio"),
         "{{LOCATION}}": escape(_compact_whitespace(personal.location) or "Location not provided"),
         "{{SECTION_SUMMARY}}": "Professional Summary",
-        "{{SECTION_COMPETENCIES}}": "Core Competencies",
+        "{{SECTION_COMPETENCIES}}": "Evidence Snapshot",
         "{{SECTION_EXPERIENCE}}": "Work Experience",
         "{{SECTION_PROJECTS}}": "Projects",
         "{{SECTION_EDUCATION}}": "Education",
