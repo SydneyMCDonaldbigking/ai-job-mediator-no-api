@@ -553,6 +553,27 @@ def _work_evidence_entry(
     )
 
 
+def _project_evidence_entry(
+    project: dict[str, object],
+    keyword_targets: list[str],
+    index: int = 0,
+    job_profile=None,
+):
+    return classify_resume_entry(
+        section="personalProjects",
+        index=index,
+        title=str(project.get("role", "")),
+        organization=str(project.get("name", "")),
+        descriptions=[
+            _compact_whitespace(str(item))
+            for item in project.get("description", [])
+            if _compact_whitespace(str(item))
+        ],
+        keyword_targets=keyword_targets,
+        job_profile=job_profile or infer_job_profile(keyword_targets=keyword_targets),
+    )
+
+
 def _project_like_entries(resume: ResumeData) -> list:
     return [
         item
@@ -780,6 +801,30 @@ def _postprocess_pdf_resume(
                     company=str(job.get("company", "")),
                 ),
             )
+
+    personal_projects = payload.get("personalProjects", [])
+    if personal_projects:
+        def project_score(indexed_project: tuple[int, dict[str, object]]) -> tuple[int, int, str]:
+            index, project = indexed_project
+            evidence_entry = _project_evidence_entry(
+                project,
+                keyword_targets,
+                index=index,
+                job_profile=job_profile,
+            )
+            text_parts = [str(project.get("role", "")), str(project.get("name", ""))]
+            text_parts.extend(str(item) for item in project.get("description", []))
+            text = " ".join(text_parts).casefold()
+            hits = sum(1 for keyword in keyword_targets if keyword.casefold() in text)
+            return (-evidence_entry.relevance_score, -hits, text)
+
+        payload["personalProjects"] = [
+            project
+            for _index, project in sorted(
+                enumerate(personal_projects),
+                key=project_score,
+            )
+        ]
 
     payload = normalize_resume_data(payload)
     return ResumeData.model_validate(payload)

@@ -1042,6 +1042,115 @@ def test_postprocess_pdf_resume_uses_evidence_map_for_role_type_sorting(sample_r
     assert tailored.workExperience[0].title == "Junior Software Developer"
 
 
+def test_virtual_candidate_tailoring_reorders_projects_for_each_jd():
+    virtual_resume = {
+        "personalInfo": {
+            "name": "Avery Tan",
+            "title": "Graduate Technology Candidate",
+            "email": "avery@example.com",
+            "phone": "+61 400 000 000",
+            "location": "Sydney NSW",
+        },
+        "summary": "Graduate technologist with mixed AI, backend, product and operations projects.",
+        "workExperience": [
+            {
+                "id": 1,
+                "title": "Product Operations Assistant",
+                "company": "Northstar Studio",
+                "location": "Sydney NSW",
+                "years": "2024",
+                "description": [
+                    "Mapped onboarding workflows in Figma and gathered stakeholder feedback.",
+                    "Coordinated customer feedback loops to improve service handoffs.",
+                ],
+            },
+            {
+                "id": 2,
+                "title": "AI Backend Intern",
+                "company": "Helio Labs",
+                "location": "Sydney NSW",
+                "years": "2025",
+                "description": [
+                    "Built a Python FastAPI service for a RAG support assistant.",
+                    "Implemented LLM evaluation scripts for answer quality checks.",
+                ],
+            },
+        ],
+        "education": [],
+        "personalProjects": [
+            {
+                "id": 1,
+                "name": "UX Onboarding Prototype",
+                "role": "Product Designer",
+                "years": "2024",
+                "description": [
+                    "Designed Figma prototypes and user flows for onboarding.",
+                    "Ran usability feedback sessions with stakeholders.",
+                ],
+            },
+            {
+                "id": 2,
+                "name": "RAG Support Assistant",
+                "role": "AI Backend Developer",
+                "years": "2025",
+                "description": [
+                    "Built a RAG assistant with FastAPI and vector retrieval.",
+                    "Implemented model evaluation scripts for LLM answer quality.",
+                ],
+            },
+            {
+                "id": 3,
+                "name": "Sales Analytics Dashboard",
+                "role": "Data Analyst",
+                "years": "2024",
+                "description": [
+                    "Analyzed SQL data and built dashboards for weekly sales insights.",
+                ],
+            },
+        ],
+        "additional": {
+            "technicalSkills": [
+                "Python",
+                "FastAPI",
+                "RAG",
+                "LLM Evaluation",
+                "SQL",
+                "Figma",
+                "User-Centred Design",
+                "Prototyping",
+                "Stakeholder Communication",
+            ],
+            "languages": ["English"],
+            "certificationsTraining": [],
+            "awards": [],
+        },
+        "customSections": {},
+        "sectionMeta": [],
+    }
+
+    ai_tailored = _postprocess_pdf_resume(
+        virtual_resume,
+        ["AI Engineer", "Python", "FastAPI", "RAG", "LLM", "model evaluation"],
+        "AI Engineer role building Python FastAPI RAG services and LLM evaluation workflows.",
+    )
+    ux_tailored = _postprocess_pdf_resume(
+        virtual_resume,
+        [
+            "UX Designer",
+            "Figma",
+            "User-Centred Design",
+            "Prototyping",
+            "Stakeholder Communication",
+        ],
+        "UX Designer role creating Figma prototypes, user-centred workflows and stakeholder feedback loops.",
+    )
+
+    assert ai_tailored.workExperience[0].title == "AI Backend Intern"
+    assert ux_tailored.workExperience[0].title == "Product Operations Assistant"
+    assert ai_tailored.personalProjects[0].name == "RAG Support Assistant"
+    assert ux_tailored.personalProjects[0].name == "UX Onboarding Prototype"
+
+
 def test_postprocess_pdf_resume_keeps_role_when_it_matches_non_technical_jd(sample_resume):
     sample_resume["workExperience"] = [
         {
