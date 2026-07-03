@@ -69,6 +69,24 @@ def test_render_resume_html_uses_recruiter_scan_visual_system(sample_resume):
     assert "Core Competencies" not in html
 
 
+def test_render_resume_html_omits_empty_optional_contact_placeholders(sample_resume):
+    sample_resume["personalInfo"]["linkedin"] = ""
+    sample_resume["personalInfo"]["website"] = ""
+    sample_resume["personalInfo"]["github"] = ""
+
+    html = render_resume_html(
+        resume=sample_resume,
+        job_description="Need Python, FastAPI, Docker and AWS experience.",
+        keywords=["Python", "FastAPI", "Docker", "AWS"],
+        template_name="modern",
+    )
+
+    assert "jane@example.com" in html
+    assert "San Francisco, CA" in html
+    assert "LinkedIn" not in html
+    assert "Portfolio" not in html
+
+
 def test_render_resume_html_can_force_resume_template(sample_resume):
     html = render_resume_html(
         resume=sample_resume,

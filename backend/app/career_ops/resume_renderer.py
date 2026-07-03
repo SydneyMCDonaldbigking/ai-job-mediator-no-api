@@ -47,6 +47,25 @@ def _render_competencies(resume: ResumeData | dict | str, keywords: list[str]) -
     )
 
 
+def _render_contact_row(resume: ResumeData) -> str:
+    personal = resume.personalInfo
+    raw_items = [
+        personal.phone,
+        personal.email,
+        personal.linkedin,
+        personal.website or personal.github,
+        personal.location,
+    ]
+    items = [
+        f"<span>{escape(_compact_whitespace(item))}</span>"
+        for item in raw_items
+        if _compact_whitespace(item)
+    ]
+    if not items:
+        return "<span>Contact details not provided</span>"
+    return '<span class="separator">|</span>'.join(items)
+
+
 def _render_section(title: str, body: str) -> str:
     clean_body = _compact_whitespace(body)
     if not clean_body:
@@ -223,6 +242,7 @@ def render_resume_html(
         "{{PORTFOLIO_URL}}": escape(_compact_whitespace(personal.website or personal.github) or "#"),
         "{{PORTFOLIO_DISPLAY}}": escape(_compact_whitespace(personal.website or personal.github) or "Portfolio"),
         "{{LOCATION}}": escape(_compact_whitespace(personal.location) or "Location not provided"),
+        "{{CONTACT_ROW}}": _render_contact_row(normalized_resume),
         "{{SECTION_SUMMARY}}": "Professional Summary",
         "{{SECTION_COMPETENCIES}}": "Evidence Snapshot",
         "{{SECTION_EXPERIENCE}}": "Work Experience",

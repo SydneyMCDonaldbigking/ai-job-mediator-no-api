@@ -146,4 +146,6 @@ frontend/app_broken_recovery.py
 frontend/_tmp_check_app.py
 .tmp-smoke/
 .tmp-smoke-tests/
+.tmp_preview/
+output/pdf/
 frontend/data/.chat_history_migrated
