@@ -22,6 +22,7 @@ from app.career_ops.resume_text import (
     _has_any_term,
 )
 from app.career_ops.tailoring_intelligence import (
+    JOB_TYPE_UX_PRODUCT,
     classify_resume_entry,
     infer_job_profile,
 )
@@ -31,6 +32,7 @@ from app.services.improver import extract_job_keywords as extract_job_keywords_l
 from app.services.improver import generate_resume_diffs
 from app.services.improver import improve_resume
 from app.services.improver import verify_diff_result
+from app.services.refiner import fix_alignment_violations, validate_master_alignment
 
 logger = logging.getLogger(__name__)
 
@@ -460,7 +462,68 @@ def _trim_summary(summary: str, max_sentences: int = 3) -> str:
     return " ".join(sentences[:max_sentences]).strip()
 
 
-def _polish_summary(payload: dict[str, object], keyword_targets: list[str]) -> str:
+def _summary_evidence_text(payload: dict[str, object]) -> str:
+    parts = [str(payload.get("summary", ""))]
+    for job in payload.get("workExperience", []):
+        parts.append(str(job.get("title", "")))
+        parts.append(str(job.get("company", "")))
+        parts.extend(str(item) for item in job.get("description", []))
+    for project in payload.get("personalProjects", []):
+        parts.append(str(project.get("name", "")))
+        parts.append(str(project.get("role", "")))
+        parts.extend(str(item) for item in project.get("description", []))
+    additional = payload.get("additional", {})
+    if isinstance(additional, dict):
+        parts.extend(str(item) for item in additional.get("technicalSkills", []))
+    return " ".join(parts)
+
+
+def _join_summary_strengths(strengths: list[str]) -> str:
+    if len(strengths) == 1:
+        return strengths[0]
+    if len(strengths) == 2:
+        return f"{strengths[0]} and {strengths[1]}"
+    return f"{', '.join(strengths[:-1])}, and {strengths[-1]}"
+
+
+def _targeted_ux_summary(payload: dict[str, object]) -> str:
+    evidence_text = _summary_evidence_text(payload)
+    strengths: list[str] = []
+
+    if _has_any_term(
+        evidence_text,
+        (
+            "user-centred",
+            "user-centered",
+            "user centred",
+            "user centered",
+            "user flow",
+            "workflow",
+            "workflow mapping",
+        ),
+    ):
+        strengths.append("user-centred workflow mapping")
+    if _has_any_term(
+        evidence_text,
+        ("figma", "prototype", "prototyping", "wireframe", "mockup"),
+    ):
+        strengths.append("Figma prototyping")
+    if _has_any_term(
+        evidence_text,
+        ("stakeholder", "feedback", "usability", "customer insight"),
+    ):
+        strengths.append("stakeholder feedback loops")
+
+    strengths = _dedupe_preserve_order(strengths)
+    if not strengths:
+        return ""
+    return (
+        f"Graduate technologist focused on {_join_summary_strengths(strengths[:3])}. "
+        "Translates user feedback into practical prototype and workflow improvements."
+    )
+
+
+def _polish_summary(payload: dict[str, object], keyword_targets: list[str], job_profile=None) -> str:
     current = _compact_whitespace(str(payload.get("summary", "")))
     for pattern, replacement in (
         (r"\bautomation scripting\b", "automation tooling"),
@@ -472,13 +535,13 @@ def _polish_summary(payload: dict[str, object], keyword_targets: list[str]) -> s
         ),
     ):
         current = re.sub(pattern, replacement, current, flags=re.IGNORECASE)
-    work_experience = payload.get("workExperience", [])
-    evidence_text_parts = [current]
-    for job in work_experience:
-        evidence_text_parts.append(str(job.get("title", "")))
-        evidence_text_parts.append(str(job.get("company", "")))
-        evidence_text_parts.extend(str(item) for item in job.get("description", []))
-    evidence_text = " ".join(evidence_text_parts)
+    payload = {**payload, "summary": current}
+    evidence_text = _summary_evidence_text(payload)
+
+    if job_profile and job_profile.primary_type == JOB_TYPE_UX_PRODUCT:
+        targeted_summary = _targeted_ux_summary(payload)
+        if targeted_summary:
+            return _trim_summary(targeted_summary)
 
     ai_evidence = _has_any_term(evidence_text, _AI_PROFILE_TERMS)
     collaboration_evidence = _has_any_term(evidence_text, _COLLABORATION_TERMS)
@@ -703,8 +766,8 @@ def _postprocess_pdf_resume(
             keyword_targets,
         )
 
-    payload["summary"] = _polish_summary(payload, keyword_targets)
     job_profile = infer_job_profile(job_description, keyword_targets=keyword_targets)
+    payload["summary"] = _polish_summary(payload, keyword_targets, job_profile)
 
     work_experience = payload.get("workExperience", [])
     if work_experience:
@@ -842,6 +905,22 @@ def _restore_protected_fields(
     return result
 
 
+def _remove_full_output_alignment_violations(
+    original_resume: dict[str, object],
+    tailored_payload: dict[str, object],
+) -> dict[str, object]:
+    """Remove unsupported additions from full-output tailoring results."""
+    alignment = validate_master_alignment(tailored_payload, original_resume)
+    if alignment.is_aligned:
+        return tailored_payload
+
+    fixed_payload = fix_alignment_violations(tailored_payload, alignment.violations)
+    remaining_alignment = validate_master_alignment(fixed_payload, original_resume)
+    if not remaining_alignment.is_aligned:
+        raise ValueError("Full-output tailoring introduced unsupported content")
+    return fixed_payload
+
+
 async def _tailor_resume(
     resume: ResumeData,
     job_description: str,
@@ -865,6 +944,10 @@ async def _tailor_resume(
             original_resume_data=resume.model_dump(),
         )
         tailored_payload = _restore_protected_fields(
+            resume.model_dump(),
+            tailored_payload,
+        )
+        tailored_payload = _remove_full_output_alignment_violations(
             resume.model_dump(),
             tailored_payload,
         )

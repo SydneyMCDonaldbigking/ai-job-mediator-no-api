@@ -1,5 +1,6 @@
 """Unit tests for Career Ops PDF generation helpers."""
 
+import copy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -1219,6 +1220,61 @@ def test_postprocess_pdf_resume_does_not_force_ai_summary_for_non_ai_jd(sample_r
     assert "Brings hands-on experience delivering AI" not in tailored.summary
 
 
+def test_postprocess_pdf_resume_rewrites_summary_for_ux_jd(sample_resume):
+    sample_resume["summary"] = "Graduate technologist focused on AI automation and RAG systems."
+    sample_resume["workExperience"] = [
+        {
+            "id": 1,
+            "title": "Product Operations Assistant",
+            "company": "Northstar Studio",
+            "location": "Sydney NSW",
+            "years": "2024",
+            "description": [
+                "Mapped user-centred onboarding workflows in Figma.",
+                "Gathered stakeholder feedback and translated it into prototype changes.",
+            ],
+        }
+    ]
+    sample_resume["personalProjects"] = [
+        {
+            "id": 1,
+            "name": "UX Onboarding Prototype",
+            "role": "Product Designer",
+            "years": "2024",
+            "description": [
+                "Designed Figma prototypes and user flows for onboarding.",
+                "Ran usability feedback sessions with stakeholders.",
+            ],
+        }
+    ]
+    sample_resume["additional"]["technicalSkills"] = [
+        "Python",
+        "RAG",
+        "Figma",
+        "User-Centred Design",
+        "Prototyping",
+        "Stakeholder Communication",
+    ]
+
+    tailored = _postprocess_pdf_resume(
+        sample_resume,
+        [
+            "UX Designer",
+            "Figma",
+            "User-Centred Design",
+            "Prototyping",
+            "Stakeholder Communication",
+        ],
+        "UX Designer role creating Figma prototypes, user-centred workflows and stakeholder feedback loops.",
+    )
+
+    summary = tailored.summary.casefold()
+    assert "user-centred" in summary
+    assert "prototype" in summary or "prototyping" in summary
+    assert "ai automation" not in summary
+    assert "rag systems" not in summary
+
+
 def test_select_competencies_prioritizes_ux_skills_over_ai_evidence_for_ux_jd(sample_resume):
     sample_resume["workExperience"] = [
         {
@@ -1310,6 +1366,45 @@ async def test_tailor_resume_uses_full_prompt_for_pdf(
     await _tailor_resume(render_resume_html.__globals__["coerce_resume_data"](sample_resume), "Need Python and RAG automation.")
 
     assert mock_improve_resume.await_args.kwargs["prompt_id"] == "full"
+
+
+@patch("app.career_ops.resume_tailoring.extract_job_keywords_llm", new_callable=AsyncMock)
+@patch("app.career_ops.resume_tailoring.improve_resume", new_callable=AsyncMock)
+async def test_tailor_resume_full_output_removes_fabricated_content(
+    mock_improve_resume,
+    mock_extract_keywords,
+    sample_resume,
+):
+    mock_extract_keywords.return_value = {
+        "required_skills": ["Python", "FastAPI"],
+        "preferred_skills": [],
+        "experience_requirements": [],
+        "education_requirements": [],
+        "key_responsibilities": [],
+        "keywords": ["backend API"],
+    }
+    fabricated_resume = copy.deepcopy(sample_resume)
+    fabricated_resume["additional"]["technicalSkills"].append("Kubernetes")
+    fabricated_resume["workExperience"].append(
+        {
+            "id": 99,
+            "title": "Platform Engineer",
+            "company": "Fictional Cloud Lab",
+            "location": "Sydney NSW",
+            "years": "2026",
+            "description": ["Managed Kubernetes clusters for production workloads."],
+        }
+    )
+    mock_improve_resume.return_value = fabricated_resume
+
+    tailored, _keywords = await _tailor_resume(
+        render_resume_html.__globals__["coerce_resume_data"](sample_resume),
+        "Need a backend engineer with Python and FastAPI.",
+    )
+
+    assert "Kubernetes" not in tailored.additional.technicalSkills
+    assert all(item.company != "Fictional Cloud Lab" for item in tailored.workExperience)
+    assert any(item.company == "Acme Corp" for item in tailored.workExperience)
 
 
 @patch("app.career_ops.resume_tailoring.extract_job_keywords_llm", new_callable=AsyncMock)
